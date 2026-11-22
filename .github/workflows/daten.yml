@@ -1,0 +1,53 @@
+name: Daten aktualisieren
+
+# Täglich: Karten, Cardmarket-Preise (Scryfall), Fertigdecks (MTGJSON), Meta (MTGGoldfish, EDHREC), Kurse (EZB).
+# Ergebnis landet im Branch "gh-pages": die App lädt von dort ihre Updates,
+# und mit GitHub Pages ist dort auch die Web-Version fürs iPhone erreichbar.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daten
+  cancel-in-progress: false
+
+jobs:
+  data:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Alte Daten sichern (falls eine Quelle heute ausfällt)
+        run: |
+          mkdir -p old
+          if git fetch --depth 1 origin gh-pages 2>/dev/null; then
+            for f in meta precons rates; do git show origin/gh-pages:data/$f.json > old/$f.json 2>/dev/null || rm -f old/$f.json; done
+          fi
+
+      - name: Daten erzeugen
+        run: |
+          mkdir -p site
+          cp -r app/src/main/assets/www/. site/
+          rm -rf site/data
+          node --max-old-space-size=6144 tools/build-data.mjs app/src/main/assets/www site/data old
+          touch site/.nojekyll
+
+      - name: Nach gh-pages veröffentlichen
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: Daten vom

@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'de.foxering.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'de.foxering.app'
+        minSdk 26
+        targetSdk 34
+        // Jeder GitHub-Build bekommt automatisch eine höhere Versionsnummer,
+        // damit Updates sich über die alte App installieren lassen.
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int)
+        versionName "1.${System.getenv('GITHUB_RUN_NUMBER') ?: '0'}"
+    }
+
+    signingConfigs {
+        release {
+            // Fester Schlüssel im Repo, damit jede neue APK als Update installiert werden kann.
+            storeFile file('foxering.keystore')
+            storePassword 'foxycana'
+            keyAlias 'foxycana'
+            keyPassword 'foxycana'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Texterkennung direkt auf dem Handy (offline, Latein-Schrift: Deutsch + Englisch)
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+    // Gleicht Kotlin-Versionen der Bibliotheken an (vermeidet "Duplicate class"-Fehler)
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+}

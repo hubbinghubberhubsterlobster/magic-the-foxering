@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Foxering</string>
+    <color name="bg">#0F0D14</color>
+    <color name="icon_bg">#2A1A1E</color>
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+    </style>
+</resources>

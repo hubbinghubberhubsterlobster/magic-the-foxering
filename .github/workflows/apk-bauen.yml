@@ -1,0 +1,69 @@
+name: APK bauen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Kartendaten mit in die App packen: aktuelle Daten vom Branch "gh-pages" nehmen,
+      # beim allerersten Mal (noch keine Daten da) selbst erzeugen.
+      - name: Kartendaten holen
+        run: |
+          D=app/src/main/assets/www/data
+          mkdir -p $D
+          if git fetch --depth 1 origin gh-pages 2>/dev/null && git show origin/gh-pages:data/cards.json > /dev/null 2>&1; then
+            for f in cards prices metadata meta rates precons; do git show origin/gh-pages:data/$f.json > $D/$f.json || true; done
+            echo "Daten von gh-pages übernommen"
+          else
+            node tools/build-data.mjs app/src/main/assets/www $D
+          fi
+          ls -la $D
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Android-SDK prüfen
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: APK bauen
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: APK umbenennen
+        run: cp app/build/outputs/apk/release/app-release.apk Foxering.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Foxering-APK
+          path: Foxering.apk
+
+      - name: Als Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.${{ github.run_number }}
+          name: Magic the Foxering 1.${{ github.run_number }}
+          body: |
+            APK herunterladen, aufs Handy laden und installieren.
+            Ein neuer Build installiert sich als Update über die alte Version.
+          files: Foxering.apk
+          make_latest: true

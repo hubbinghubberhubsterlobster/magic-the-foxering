@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Kopf -->
+    <path android:fillColor="#F28C28"
+        android:pathData="M34,30 L46,45 L62,45 L74,30 L76,53 C76,67 66,78 54,82 C42,78 32,67 32,53 Z" />
+    <!-- Innenohren -->
+    <path android:fillColor="#8A3B12" android:pathData="M37,36 L45,45 L38,47 Z" />
+    <path android:fillColor="#8A3B12" android:pathData="M71,36 L63,45 L70,47 Z" />
+    <!-- Schnauze -->
+    <path android:fillColor="#FFF4E6"
+        android:pathData="M39,59 C46,62 50,66 54,75 C58,66 62,62 69,59 C66,70 61,77 54,81 C47,77 42,70 39,59 Z" />
+    <!-- Augen -->
+    <path android:fillColor="#1B1530" android:pathData="M43.5,56 a2.6,2.6 0 1,0 5.2,0 a2.6,2.6 0 1,0 -5.2,0 Z" />
+    <path android:fillColor="#1B1530" android:pathData="M59.3,56 a2.6,2.6 0 1,0 5.2,0 a2.6,2.6 0 1,0 -5.2,0 Z" />
+    <!-- Nase -->
+    <path android:fillColor="#1B1530" android:pathData="M51.2,74 L56.8,74 L54,77.6 Z" />
+    <!-- Manasymbole -->
+    <path android:fillColor="#E0483A" android:pathData="M49,24 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0 Z" />
+    <path android:fillColor="#3A8FD9" android:pathData="M38.6,20 a3.4,3.4 0 1,0 6.8,0 a3.4,3.4 0 1,0 -6.8,0 Z" />
+    <path android:fillColor="#2F9E55" android:pathData="M62.6,20 a3.4,3.4 0 1,0 6.8,0 a3.4,3.4 0 1,0 -6.8,0 Z" />
+</vector>

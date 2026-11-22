@@ -1,0 +1,10 @@
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+# Kartendaten werden beim Build erzeugt bzw. vom Branch gh-pages geholt
+app/src/main/assets/www/data/
+site/
+old/
