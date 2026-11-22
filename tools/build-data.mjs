@@ -187,6 +187,24 @@ try{
 const oldMeta = readOld('meta.json') || {formats: {}, commanders: []};
 const meta = {date: new Date().toISOString(), source: 'MTGGoldfish · EDHREC', formats: {}, commanders: []};
 const GF = 'https://www.mtggoldfish.com';
+const unent = t => String(t).replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+  .replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+/* Deckliste aus einer MTGGoldfish-Seite lesen: verstecktes Textfeld oder die Kartentabelle */
+function goldfishDeck(html){
+  const m = html.match(/<(?:input|textarea)[^>]*id=["']deck_input_deck["'][^>]*?(?:value=["']([^"']*)["'][^>]*)?>([^<]*)/i)
+    || html.match(/<(?:input|textarea)[^>]*value=["']([^"']*)["'][^>]*id=["']deck_input_deck["'][^>]*>()/i);
+  if(m){ const t = unent(m[1] || m[2] || ''); const d = X.parseDeckText(t); if(d.main.length >= 2) return d; }
+  // Tabelle: deck-col-qty / deck-col-card, Abschnitt "Sideboard" trennt
+  const main = [], side = []; let cur = main;
+  const re = /(class=["'][^"']*deck-category-header[^"']*["'][\s\S]*?<\/t[dhr]>)|class=["']deck-col-qty["'][^>]*>\s*(\d+)\s*<[\s\S]*?class=["']deck-col-card["'][^>]*>([\s\S]*?)<\/td>/gi;
+  let r;
+  while((r = re.exec(html))){
+    if(r[1]){ if(/sideboard/i.test(r[1].replace(/<[^>]+>/g, ' '))) cur = side; continue; }
+    const name = unent(r[3].replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+    if(name) cur.push([name, +r[2]]);
+  }
+  return main.length >= 2 ? {main, side} : null;
+}
 for(const fmt of X.META_FORMATS){
   try{
     const html = await get(`${GF}/metagame/${fmt}/full#paper`, 'text');
@@ -205,11 +223,15 @@ for(const fmt of X.META_FORMATS){
       try{
         const ah = await get(`${GF}/archetype/${a.slug}#paper`, 'text');
         const dm = ah.match(/\/deck\/download\/(\d+)/);
-        if(!dm) continue;
-        await sleep(600);
-        const txt = await get(`${GF}/deck/download/${dm[1]}`, 'text');
-        const d = X.parseDeckText(txt);
-        a.cards = d.main; a.side = d.side; a.deck = +dm[1];
+        // Die Liste steht direkt auf der Archetyp-Seite (der Download-Link ist für Skripte gesperrt)
+        let d = goldfishDeck(ah);
+        if(!d && dm){ await sleep(600); try{ d = X.parseDeckText(await get(`${GF}/deck/download/${dm[1]}`, 'text', 1)); }catch(e){} }
+        if(!d || !d.main.length){
+          console.warn('  Archetyp', a.slug, 'keine Liste gefunden');
+          if(!globalThis.__gfDump){ globalThis.__gfDump = 1; for(const k of ['deck_input', 'deck-col-qty', 'decklist', 'deck-view']){ const i = ah.indexOf(k); if(i >= 0) console.log('  [Seite] ' + k + ': ' + ah.slice(Math.max(0, i - 200), i + 600).replace(/\s+/g, ' ')); } }
+          continue;
+        }
+        a.cards = d.main; a.side = d.side; a.deck = dm ? +dm[1] : null;
       }catch(e){ console.warn('  Archetyp', a.slug, e.message); }
     }
     const ok = list.filter(a => a.cards && a.cards.length);
