@@ -51,11 +51,12 @@ const bulk = await get('https://api.scryfall.com/bulk-data');
 const items = Array.isArray(bulk) ? bulk : bulk.data || bulk.items || [];
 let all = items.find(b => /^all[_-]?cards$/i.test(b.type || '') || /^all cards$/i.test(b.name || ''));
 if(!all){ console.log('Bulk-Antwort:', JSON.stringify(bulk).slice(0, 1500)); throw new Error('Kein "all_cards" in der Bulk-Liste'); }
-let dlUri = all.download_uri || all.downloadUri || all.download_url;
-if(!dlUri && all.uri){ const one = await get(all.uri); dlUri = one.download_uri || one.downloadUri || one.download_url; all = Object.assign({}, one, all); }
+// Scryfall liefert inzwischen auch/nur JSON-Lines als .gz (jsonl_download_uri)
+let dlUri = all.jsonl_download_uri || all.download_uri || all.downloadUri || all.download_url;
+if(!dlUri && all.uri){ const one = await get(all.uri); dlUri = one.jsonl_download_uri || one.download_uri || one.downloadUri || one.download_url; all = Object.assign({}, one, all); }
 if(!dlUri){ console.log('Bulk-Eintrag:', JSON.stringify(all).slice(0, 1500)); throw new Error('Keine Download-Adresse für all_cards'); }
 all.download_uri = dlUri;
-console.log('Lade', dlUri, all.size ? (all.size / 1e9).toFixed(2) + ' GB' : '', '…');
+console.log('Lade', dlUri, (all.compressed_size || all.size) ? ((all.compressed_size || all.size) / 1e9).toFixed(2) + ' GB' : '', '…');
 
 const oracle = [], oIdx = new Map();          // oracle_id → Index
 const prints = [];                             // englische Papier-Drucke
@@ -82,7 +83,8 @@ let lines = 0;
 {
   const res = await fetch(all.download_uri, {headers: UA});
   if(!res.ok) throw new Error('Bulk-Download ' + res.status);
-  const reader = res.body.getReader();
+  const gz = /\.gz($|\?)/.test(all.download_uri) && !/gzip/i.test(res.headers.get('content-encoding') || '');
+  const reader = (gz ? res.body.pipeThrough(new DecompressionStream('gzip')) : res.body).getReader();
   const dec = new TextDecoder();
   let buf = '';
   const handle = line => {
