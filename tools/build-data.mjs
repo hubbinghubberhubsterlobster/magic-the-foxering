@@ -149,7 +149,7 @@ const enId = new Map(prints.map(p => [p.a[4], p.k]));
    2) Fertigdecks (MTGJSON)
    ========================================================= */
 try{
-  const SKIP_DECK = /world championship|pro tour|mtgo|arena|promo/i;
+  const SKIP_DECK = /world championship|pro tour|mtgo|arena|promo|shandalar|sample deck|bundle land pack|welcome booster/i;
   const gz = await get('https://mtgjson.com/api/v5/AllDeckFiles.tar.gz', 'buf');
   const tar = zlib.gunzipSync(gz);
   const decks = [];
