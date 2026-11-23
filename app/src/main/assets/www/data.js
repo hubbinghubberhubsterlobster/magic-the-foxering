@@ -29,7 +29,7 @@ const RAR_DE = {c:'Common', u:'Uncommon', r:'Rare', m:'Mythic', s:'Special', b:'
 const RAR_COL = {c:'#B8BCC8', u:'#9FC3D6', r:'#E3B65C', m:'#F26B3A', s:'#B07CF6', b:'#B07CF6'};
 // Reihenfolge = Bits in den Kartendaten (siehe tools/build-data.mjs)
 const LEGAL_FORMATS = ['standard','pioneer','modern','legacy','vintage','commander','pauper','brawl'];
-const FORMAT_DE = {standard:'Standard', pioneer:'Pioneer', modern:'Modern', legacy:'Legacy', vintage:'Vintage', commander:'Commander', pauper:'Pauper', brawl:'Brawl'};
+const FORMAT_DE = {standard:'Standard', pioneer:'Pioneer', modern:'Modern', legacy:'Legacy', vintage:'Vintage', commander:'Commander', pauper:'Pauper', brawl:'Brawl', limited:'Limited (40 Karten)'};
 const META_FORMATS = ['standard','pioneer','modern','pauper','legacy'];
 const TYPES = [['Creature','Kreatur'],['Planeswalker','Planeswalker'],['Instant','Spontanzauber'],['Sorcery','Hexerei'],['Artifact','Artefakt'],['Enchantment','Verzauberung'],['Battle','Schlacht'],['Land','Land']];
 const TYPE_DE = Object.fromEntries(TYPES);
@@ -40,10 +40,12 @@ const S = {
   priceDate: null, rates: {EUR:1}, ratesDate: null, meta: null, precons: null,
   coll: {},      // "set:nr|lang|foil" -> {q, t}
   decks: [],
+  bundles: [],   // Bundle-Events: {id, name, prod, created, cards:{key:{q,t}}, merged}
+  products: null, setDe: {},
   settings: {
     currency:'EUR', dispLang:'de', scanLang:'auto', defaultLang:'de', confirm:2, sound:true, vibrate:true, rotation:'auto', foil:false, frame:'m'
   },
-  ui: { assist:null, tab:'collection', mode:'owned', q:'', cols:[], set:'', rarity:'', type:'', fmt:'', lang:'', foil:'', sort:'value', limit:240, deck:null, allSets:false, setQ:'' }
+  ui: { bundle:null, assist:null, tab:'collection', mode:'owned', q:'', cols:[], set:'', rarity:'', type:'', fmt:'', lang:'', foil:'', sort:'value', limit:240, deck:null, allSets:false, setQ:'' }
 };
 
 /* ---------- Hilfsfunktionen ---------- */
@@ -97,14 +99,14 @@ let QIDX = null;
 function persist(){ QIDX = null; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 250); if(window.scheduleAutoBackup) window.scheduleAutoBackup(); }
 async function saveNow(){
   clearTimeout(saveTimer); QIDX = null;
-  const data = {coll:S.coll, decks:S.decks, settings:S.settings};
+  const data = {coll:S.coll, decks:S.decks, bundles:S.bundles, settings:S.settings};
   try{ localStorage.setItem('mf-user', JSON.stringify(data)); }catch(e){}
   try{ await DB.set('user', data); }catch(e){}
 }
 async function loadUser(){
   let u = await DB.get('user');
   if(!u){ try{ u = JSON.parse(localStorage.getItem('mf-user') || 'null'); }catch(e){ u = null; } }
-  if(u){ S.coll = u.coll || {}; S.decks = u.decks || []; Object.assign(S.settings, u.settings || {}); }
+  if(u){ S.coll = u.coll || {}; S.decks = u.decks || []; S.bundles = u.bundles || []; Object.assign(S.settings, u.settings || {}); }
 }
 
 /* ---------- Kartenkatalog ---------- */
@@ -159,6 +161,15 @@ async function updateMeta(base=UPD){
   if(m && (Object.keys(m.formats || {}).length || (m.commanders || []).length)){ S.meta = m; await DB.set('meta', m); if(window.ASSIST) ASSIST.reset(); }
   return S.meta;
 }
+function applyProducts(p){
+  if(!p || !p.items) return;
+  S.products = p; S.setDe = p.setDe || {};
+}
+async function updateProducts(base=UPD){
+  const p = await getJSON(stampUrl(base, 'products.json'));
+  if(p && p.items){ applyProducts(p); await DB.set('products', p); }
+  return S.products;
+}
 async function loadPrecons(){
   if(S.precons) return S.precons;
   let p = await DB.get('precons');
@@ -207,7 +218,7 @@ function cardImg(c, L, size, attrs=''){
   const a = cImg(c, L, size), b = cImgEn(c, size);
   return `<img ${attrs} loading="lazy" src="${esc(a)}" ${a !== b ? `data-fb="${esc(b)}"` : ''} alt="">`;
 }
-function setName(code){ const s = S.sets[code]; return s ? s.name : String(code).toUpperCase(); }
+function setName(code){ const s = S.sets[code]; const de = dl() === 'de' && S.setDe[code]; return de || (s ? s.name : String(code).toUpperCase()); }
 function setIcon(code){ const s = S.sets[code]; return `<img class="seticon" src="${SETICON}${esc(s ? s.icon : code)}.svg" alt="" onerror="this.remove()">`; }
 function colList(o){ return (o.col || '').split('').filter(Boolean); }
 function ciList(o){ return (o.ci || '').split('').filter(Boolean); }
@@ -225,7 +236,7 @@ function isLegendary(o){ return /\bLegendary\b/.test(o.type.split('//')[0]); }
 function canCommand(o){ return (isLegendary(o) && /\bCreature\b/.test(o.type.split('//')[0])) || /can be your commander/i.test(o.txt); }
 function legalIn(o, fmt){ const i = LEGAL_FORMATS.indexOf(fmt); return i < 0 || !!(o.leg & (1 << i)); }
 function maxCopies(o, fmt){
-  if(isBasic(o) || /A deck can have any number of cards named/i.test(o.txt)) return 99;
+  if(fmt === 'limited' || isBasic(o) || /A deck can have any number of cards named/i.test(o.txt)) return 99;
   const m = o.txt.match(/A deck can have up to (\w+) cards named/i);
   if(m){ const w = {seven:7, eight:8, nine:9, ten:10}[m[1].toLowerCase()]; if(w) return w; }
   return fmt === 'commander' || fmt === 'brawl' ? 1 : 4;
@@ -350,4 +361,27 @@ function parseEdhrec(j){
 function edhSlug(name){
   return String(name).split(' // ')[0].normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
     .replace(/['’",.!?:]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/* ---------- Bundle-Events ---------- */
+function bundleById(id){ return S.bundles.find(b => b.id === id); }
+function bundleEntries(b){
+  const out = [];
+  for(const [k, e] of Object.entries(b.cards || {})){ const [id, lang, f] = k.split('|'); const c = S.byId.get(id); if(c) out.push({c, lang, foil: f === '1', q: e.q, t: e.t || 0, k}); }
+  return out;
+}
+function bundleAdd(b, id, lang, foil, n=1){
+  const k = ckey(id, lang, foil), e = b.cards[k] || {q:0, t:Date.now()};
+  e.q += n; if(n > 0) e.t = Date.now();
+  if(e.q <= 0) delete b.cards[k]; else b.cards[k] = e;
+  if(b.merged) addCard(id, lang, foil, n);   // schon übernommen → Sammlung mitführen
+  persist();
+  return e.q > 0 ? e.q : 0;
+}
+function bundleQty(b, id, lang, foil){ const e = b.cards[ckey(id, lang, foil)]; return e ? e.q : 0; }
+function bundleOwned(b){ const m = new Map(); for(const e of bundleEntries(b)) m.set(e.c.o.i, (m.get(e.c.o.i) || 0) + e.q); return m; }
+function bundleStats(b){
+  let total = 0, value = 0; const uniq = new Set(); let top = null, topV = 0;
+  for(const e of bundleEntries(b)){ total += e.q; uniq.add(e.c.o.i); const p = priceEUR(e.c, e.foil) || 0; value += p * e.q; if(p > topV){ topV = p; top = e; } }
+  return {total, unique: uniq.size, value, top, topV};
 }

@@ -52,12 +52,12 @@ function langName(L){ return ({de:'Deutsch', en:'Englisch', fr:'Französisch', i
 
 /* ---------- Navigation ---------- */
 const NAV = [];
-function snap(){ const u = S.ui; return {tab:u.tab, deck:u.deck, assist:u.assist, mode:u.mode, set:u.set, sort:u.sort, q:u.q, cols:[...u.cols], rarity:u.rarity, type:u.type, fmt:u.fmt, lang:u.lang, foil:u.foil, y: window.scrollY}; }
+function snap(){ const u = S.ui; return {tab:u.tab, deck:u.deck, assist:u.assist, bundle:u.bundle, mode:u.mode, set:u.set, sort:u.sort, q:u.q, cols:[...u.cols], rarity:u.rarity, type:u.type, fmt:u.fmt, lang:u.lang, foil:u.foil, y: window.scrollY}; }
 function go(ch){ NAV.push(snap()); if(NAV.length > 50) NAV.shift(); Object.assign(S.ui, ch); S.ui.limit = 240; render(); window.scrollTo(0, 0); }
 function goBack(){ if(!NAV.length) return false; const st = NAV.pop(); const y = st.y; delete st.y; Object.assign(S.ui, st); render(); setTimeout(() => window.scrollTo(0, y || 0), 0); return true; }
 function backBtn(){ return NAV.length ? `<button class="round back" data-act="back" aria-label="Zurück">‹</button>` : ''; }
 A.back = () => { if(!goBack()) go({tab:'collection', deck:null, assist:null}); };
-A.tab = el => { const t = el.dataset.tab; NAV.length = 0; if(t === S.ui.tab && !S.ui.deck && !S.ui.assist && !(t === 'collection' && S.ui.set)){ window.scrollTo(0, 0); render(); return; } Object.assign(S.ui, {tab:t, deck:null, assist:null, limit:240}); if(t === 'collection') S.ui.set = ''; render(); window.scrollTo(0, 0); };
+A.tab = el => { const t = el.dataset.tab; NAV.length = 0; if(t === S.ui.tab && !S.ui.deck && !S.ui.assist && !S.ui.bundle && !(t === 'collection' && S.ui.set)){ window.scrollTo(0, 0); render(); return; } Object.assign(S.ui, {tab:t, deck:null, assist:null, bundle:null, limit:240}); if(t === 'collection') S.ui.set = ''; render(); window.scrollTo(0, 0); };
 function render(){
   if(SEL && S.ui.tab !== 'collection') selEnd();
   $$('#nav .nav-btn').forEach(b => b.classList.toggle('on', b.dataset.tab === S.ui.tab));
@@ -66,6 +66,7 @@ function render(){
   if(t === 'collection') renderCollection();
   else if(t === 'sets') renderSets();
   else if(t === 'decks') S.ui.assist ? ASSIST.render() : S.ui.deck ? renderDeck() : renderDecks();
+  else if(t === 'bundles') S.ui.assist ? ASSIST.render() : S.ui.deck ? renderDeck() : S.ui.bundle ? renderBundle() : renderBundles();
   else renderMore();
 }
 
@@ -268,7 +269,7 @@ A['sel-add'] = async () => {
 A['sel-deck'] = () => {
   openSheet(`<h2>${SEL.size} Karten zu Deck hinzufügen</h2>
     <label class="lbl">Anzahl pro Karte</label><div class="seg" id="sd-n"><button class="on" data-act="sd-n" data-n="1">Je 1</button><button data-act="sd-n" data-n="own">So viele ich habe</button><button data-act="sd-n" data-n="4">Je 4</button></div>
-    <div class="list">${S.decks.map(d => `<button class="item" style="width:100%;text-align:left" data-act="sd-pick" data-id="${d.id}"><div class="deck-inks">${colDots(deckStats(d).cols)}</div><div class="grow"><b>${esc(d.name)}</b><div class="tiny muted">${FORMAT_DE[d.fmt] || ''} · ${deckStats(d).count} Karten</div></div><span class="muted">›</span></button>`).join('')}
+    <div class="list">${S.decks.filter(d => !d.pool).map(d => `<button class="item" style="width:100%;text-align:left" data-act="sd-pick" data-id="${d.id}"><div class="deck-inks">${colDots(deckStats(d).cols)}</div><div class="grow"><b>${esc(d.name)}</b><div class="tiny muted">${FORMAT_DE[d.fmt] || ''} · ${deckStats(d).count} Karten</div></div><span class="muted">›</span></button>`).join('')}
       <button class="item" style="width:100%;text-align:left" data-act="sd-pick" data-id="new"><span style="font-size:20px">＋</span><div class="grow"><b>Neues Deck</b></div></button></div>`);
   window.__sdN = '1';
 };
@@ -382,12 +383,9 @@ function deckCount(d, o){ let n = 0; for(const [id, k] of Object.entries(d.cards
 let ALLOC = null;
 function deckNeeds(d){ const m = new Map(); for(const [id, n] of Object.entries(d.cards || {})){ const c = S.byId.get(id); if(!c || isBasic(c.o)) continue; const k = gkey(c); m.set(k, (m.get(k) || 0) + n); } return m; }
 function ownedByKey(){ const m = new Map(); for(const e of entries()){ const k = gkey(e.c); m.set(k, (m.get(k) || 0) + e.q); } return m; }
-function syncAlloc(){
-  const own = ownedByKey(), used = new Map();
-  const before = JSON.stringify(S.decks.map(d => d.alloc || {}));
-  const decks = [...S.decks].sort((a, b) => (a.created || 0) - (b.created || 0));
-  const needs = new Map(decks.map(d => [d.id, deckNeeds(d)]));
-  const free = k => Math.max(0, (own.get(k) || 0) - (used.get(k) || 0));
+/* Zuordnung Karte → Deck. Bundle-Decks (d.pool) nutzen nur die Karten ihres Bundles, alle anderen die Sammlung. */
+function allocGroup(decks, own, needs){
+  const used = new Map(), free = k => Math.max(0, (own.get(k) || 0) - (used.get(k) || 0));
   for(const d of decks){
     const al = d.alloc || (d.alloc = {}), need = needs.get(d.id);
     for(const k of Object.keys(al)){ const n = Math.min(al[k], need.get(k) || 0, free(k)); if(n > 0){ al[k] = n; used.set(k, (used.get(k) || 0) + n); } else delete al[k]; }
@@ -398,7 +396,19 @@ function syncAlloc(){
   }
   const holders = new Map();
   for(const d of decks) for(const [k, n] of Object.entries(d.alloc)){ if(!holders.has(k)) holders.set(k, []); holders.get(k).push({d, n}); }
-  ALLOC = {own, used, holders, needs};
+  return {own, used, holders};
+}
+function bundleByKey(b){ const m = new Map(); for(const e of bundleEntries(b)){ const k = gkey(e.c); m.set(k, (m.get(k) || 0) + e.q); } return m; }
+function syncAlloc(){
+  const before = JSON.stringify(S.decks.map(d => d.alloc || {}));
+  const decks = [...S.decks].sort((a, b) => (a.created || 0) - (b.created || 0));
+  const needs = new Map(decks.map(d => [d.id, deckNeeds(d)]));
+  const pools = new Map();
+  for(const d of decks){ const p = d.pool && bundleById(d.pool) ? d.pool : ''; if(!pools.has(p)) pools.set(p, []); pools.get(p).push(d); }
+  const groups = new Map([['', allocGroup(pools.get('') || [], ownedByKey(), needs)]]);
+  for(const [p, ds] of pools) if(p) groups.set(p, allocGroup(ds, bundleByKey(bundleById(p)), needs));
+  const main = groups.get('');
+  ALLOC = {own: main.own, used: main.used, holders: main.holders, needs, groups, G: d => groups.get(d && d.pool && groups.has(d.pool) ? d.pool : '')};
   if(JSON.stringify(S.decks.map(d => d.alloc || {})) !== before) persist();
   return ALLOC;
 }
@@ -419,20 +429,20 @@ function deckStats(d){
   for(const [k, n] of need){
     const a = (d.alloc && d.alloc[k]) || 0; if(a >= n) continue;
     missing += n - a;
-    const notOwned = Math.max(0, n - (AL.own.get(k) || 0));
+    const notOwned = Math.max(0, n - (AL.G(d).own.get(k) || 0));
     buy += notOwned; inOther += n - a - notOwned;
   }
-  for(const [id, n] of Object.entries(d.cards)){ const c = S.byId.get(id); if(!c || isBasic(c.o)) continue; const k = gkey(c); const notOwned = Math.max(0, (need.get(k) || 0) - (AL.own.get(k) || 0)); if(notOwned) missingValue += (priceEUR(c, false) || cheapest(c.o) || 0) * Math.min(n, notOwned); }
+  for(const [id, n] of Object.entries(d.cards)){ const c = S.byId.get(id); if(!c || isBasic(c.o)) continue; const k = gkey(c); const notOwned = Math.max(0, (need.get(k) || 0) - (AL.G(d).own.get(k) || 0)); if(notOwned) missingValue += (priceEUR(c, false) || cheapest(c.o) || 0) * Math.min(n, notOwned); }
   return {count, value, missing, inOther, buy, missingValue, lands, cols: colsArr, curve, types};
 }
 function deckWarnings(d, st){
   const w = [], fmt = d.fmt, cmd = d.cmd && S.byId.get(d.cmd);
   const isCmd = fmt === 'commander' || fmt === 'brawl';
-  const target = fmt === 'commander' ? 100 : fmt === 'brawl' ? 60 : 60;
+  const target = fmt === 'commander' ? 100 : fmt === 'limited' ? 40 : 60;
   if(isCmd){
     if(!cmd) w.push('Noch kein Commander festgelegt (Menü ⋯)');
     if(st.count && st.count !== target) w.push(`${st.count} von ${target} Karten`);
-  } else if(st.count && st.count < 60) w.push(`Noch ${60 - st.count} Karten bis 60`);
+  } else if(st.count && st.count < target) w.push(`Noch ${target - st.count} Karten bis ${target}`);
   const ci = cmd ? new Set(ciList(cmd.o)) : null;
   const per = new Map();
   for(const [id, n] of Object.entries(d.cards)){ const c = S.byId.get(id); if(c) per.set(c.o, (per.get(c.o) || 0) + n); }
@@ -451,7 +461,7 @@ const TIER_COL = {S:'#F5D58E', A:'#3CCB7F', B:'#3A8FD9', C:'#9A9CB8', D:'#FF6B6B
 function tierBadge(r){ return r ? `<div style="text-align:center;min-width:44px"><div style="font-weight:800;font-size:20px;color:${TIER_COL[r.tier]}">${r.tier}</div><div class="tiny muted">${r.score}</div></div>` : '<div style="min-width:44px"></div>'; }
 function renderDecks(){
   syncAlloc();
-  const rated = S.decks.map(d => ({d, r: window.ASSIST ? ASSIST.rateDeck(d) : null})).sort((a, b) => (b.r ? b.r.score : -1) - (a.r ? a.r.score : -1));
+  const rated = S.decks.filter(d => !d.pool).map(d => ({d, r: window.ASSIST ? ASSIST.rateDeck(d) : null})).sort((a, b) => (b.r ? b.r.score : -1) - (a.r ? a.r.score : -1));
   const list = rated.map(({d, r}, i) => { const st = deckStats(d); return `<button class="deck-item" data-act="deck-open" data-id="${d.id}">
       ${tierBadge(r)}
       <div class="deck-inks">${colDots(st.cols)}</div>
@@ -466,7 +476,7 @@ function renderDecks(){
     ${list ? `<div class="row between" style="margin:4px 0 8px"><b>Ranking deiner Decks</b><button class="chip" data-act="rank-info">?</button></div>` + list : `<div class="empty"><div class="icon">🃏</div><b>Noch keine Decks</b><p>Hast du ein Commander- oder Starterdeck gekauft? Tipp auf <b>Fertigdeck gekauft</b> – alle Karten landen sofort in deiner Sammlung.</p></div>`}
     <button class="btn ghost block" data-act="deck-import" style="margin-top:6px">Deckliste einfügen (Text, Moxfield, Arena …)</button>`;
 }
-A['deck-open'] = el => go({tab:'decks', deck: el.dataset.id, assist:null});
+A['deck-open'] = el => { const d = S.decks.find(x => x.id === el.dataset.id); go({tab: d && d.pool ? 'bundles' : 'decks', deck: el.dataset.id, assist:null}); };
 A['deck-back'] = () => { if(!goBack()){ S.ui.deck = null; render(); } };
 function fmtButtons(){ return LEGAL_FORMATS.filter(f => f !== 'vintage').map(f => ({l:FORMAT_DE[f], v:f, c:'ghost'})); }
 A['deck-new'] = async () => {
@@ -497,6 +507,7 @@ function renderDeck(){
     ${r ? `<div class="card row" style="margin-bottom:12px">${tierBadge(r)}<div class="grow"><b>Einschätzung: Stufe ${r.tier}</b>
       <div class="tiny muted">${r.arche ? `Ähnelt <b>${esc(r.arche.name)}</b>${r.arche.share ? ` – ${r.arche.share}% der Turnierdecks` : ''}` : r.note || 'Kein bekannter Meta-Archetyp – eher ein eigenes Deck'}</div>
       <div class="tiny muted">Kartenstärke ${Math.round(r.quality * 100)}/100${r.metaDate ? ' · Meta-Stand ' + fmtDate(r.metaDate) : ''}</div></div></div>` : ''}
+    ${d.pool && bundleById(d.pool) ? `<div class="card small" style="margin-bottom:12px">🎁 Deck aus dem Bundle <b>${esc(bundleById(d.pool).name)}</b> – „fehlt“ heißt: nicht im Bundle.</div>` : ''}
     ${warn.length ? `<div class="warn" style="margin-bottom:12px">${warn.map(esc).join('<br>')}</div>` : ''}
     ${window.ASSIST && cards.length ? `<details class="guide-box"><summary>📖 So spielst du dieses Deck</summary>${ASSIST.guide(d)}</details>` : ''}
     <div class="card"><b class="small">Manakurve (ohne Länder)</b><div class="curve">${st.curve.map((n, i) => `<div><span>${n || ''}</span><i style="height:${Math.round(n / maxC * 56)}px"></i>${i === 7 ? '7+' : i}</div>`).join('')}</div></div>
@@ -504,8 +515,8 @@ function renderDeck(){
     ${order.map(g => { const xs = groups[g]; return `<h3>${esc(g === 'Commander' ? 'Commander' : GROUP_DE[g])} <span class="muted">(${xs.reduce((s, x) => s + x.n, 0)})</span></h3>` + xs.map(x => {
       const basic = isBasic(x.c.o);
       const k = gkey(x.c), need = basic ? 0 : (ALLOC.needs.get(d.id).get(k) || x.n), a = (d.alloc && d.alloc[k]) || 0, miss = Math.max(0, need - a);
-      const others = (ALLOC.holders.get(k) || []).filter(h => h.d.id !== d.id);
-      const notOwned = Math.max(0, need - (ALLOC.own.get(k) || 0));
+      const others = (ALLOC.G(d).holders.get(k) || []).filter(h => h.d.id !== d.id);
+      const notOwned = Math.max(0, need - (ALLOC.G(d).own.get(k) || 0));
       const status = basic ? '<span class="muted">Standardland</span>' : !miss ? '<span style="color:var(--good)">✓ im Deck</span>'
         : `<span class="miss">${miss} fehlt</span>${notOwned ? ` <span class="tiny muted">· ${notOwned} nicht im Besitz (${money((priceEUR(x.c, false) || cheapest(x.c.o) || 0) * notOwned)})</span>` : ''}`
           + others.map(h => `<button class="chip mini" data-act="alloc-take" data-k="${esc(k)}" data-from="${h.d.id}">↩ aus „${esc(h.d.name)}“ holen (${h.n})</button>`).join('');
@@ -576,7 +587,7 @@ function deckText(d){
 A['deck-copy'] = () => { const t = deckText(currentDeck()); if(NATIVE) NATIVE.copyText(t); else navigator.clipboard && navigator.clipboard.writeText(t); closeSheet(); toast('Deckliste kopiert'); };
 A['deck-missing'] = () => {
   const d = currentDeck(); syncAlloc(); const rows = [];
-  const own = ALLOC.own, need = ALLOC.needs.get(d.id) || new Map();
+  const own = ALLOC.G(d).own, need = ALLOC.needs.get(d.id) || new Map();
   for(const [id] of Object.entries(d.cards)){ const c = S.byId.get(id); if(!c || isBasic(c.o)) continue; const k = gkey(c); const miss = (need.get(k) || 0) - (own.get(k) || 0); if(miss > 0 && !rows.some(r => r.c.o === c.o)) rows.push({c, miss}); }
   const pr = r => priceEUR(r.c, false) || cheapest(r.c.o) || 0;
   rows.sort((a, b) => pr(b) * b.miss - pr(a) * a.miss);
@@ -634,6 +645,13 @@ A['deck-import-go'] = async () => {
 };
 
 /* ---------- Fertigdecks (Commander-, Starter-, Planeswalker-Decks …) ---------- */
+const DECKTYPE_DE = {'Commander Deck':'Commander-Deck', 'Theme Deck':'Themendeck', 'Intro Pack':'Einführungspack', 'Planeswalker Deck':'Planeswalker-Deck', 'Welcome Deck':'Willkommensdeck',
+  'Duel Deck':'Duell-Deck', 'Challenger Deck':'Herausforderer-Deck', 'Pioneer Challenger Deck':'Pioneer-Herausforderer-Deck', 'Starter Deck':'Starterdeck', 'Starter Kit':'Starter-Kit',
+  'Event Deck':'Event-Deck', 'Enhanced Deck':'Erweitertes Deck', 'Game Night Deck':'Game-Night-Deck', 'Guild Kit':'Gilden-Kit', 'Clash Pack':'Clash-Pack', 'Planechase Deck':'Planechase-Deck',
+  'Archenemy Deck':'Archenemy-Deck', 'Advanced Deck':'Fortgeschrittenen-Deck', "Deck Builder's Toolkit":'Deckbauer-Toolkit', 'Box Set':'Box-Set', 'Jumpstart':'Jumpstart-Booster',
+  'Brawl Deck':'Brawl-Deck', 'Secret Lair Drop':'Secret-Lair-Drop', 'Starter Set':'Starter-Set', 'Premium Deck':'Premium-Deck',
+  'Two-Player Starter Set':'Starter-Set für 2 Spieler', 'Commander Collection':'Commander-Kollektion'};
+function deckTypeDe(t){ return dl() === 'de' ? (DECKTYPE_DE[t] || String(t).replace(/ Deck$/, '-Deck')) : t; }
 let PB = {q:'', kind:'cmd'};
 A.prebuilt = async () => {
   openSheet(`<div class="boot" style="min-height:200px"><div class="loader"></div>Lade Fertigdecks …</div>`);
@@ -650,7 +668,7 @@ function pbList(){
   const decks = S.precons.decks.map((d, i) => ({d, i})).filter(({d}) => (PB.kind === 'all' || (PB.kind === 'cmd') === /commander/i.test(d[3]))
     && (!q || ENGINE.norm(d[0] + ' ' + d[1] + ' ' + setName(d[1])).includes(q)));
   $('#pb-list').innerHTML = decks.slice(0, 80).map(({d, i}) => `<button class="item" style="width:100%;text-align:left" data-act="prebuilt-pick" data-i="${i}">
-    <div class="seticon-big">${setIcon(d[1])}</div><div class="grow"><b style="display:block">${esc(d[0])}</b><span class="tiny muted">${esc(d[3])} · ${esc(setName(d[1]))} · ${fmtDate(d[2])}</span></div><span class="muted">›</span></button>`).join('')
+    <div class="seticon-big">${setIcon(d[1])}</div><div class="grow"><b style="display:block">${esc(d[0])}</b><span class="tiny muted">${esc(deckTypeDe(d[3]))} · ${esc(setName(d[1]))} · ${fmtDate(d[2])}</span></div><span class="muted">›</span></button>`).join('')
     + (decks.length > 80 ? `<p class="tiny muted" style="text-align:center">${decks.length - 80} weitere – Suche benutzen</p>` : '') || '<div class="empty">Kein Deck gefunden.</div>';
 }
 A['pb-kind'] = el => { PB.kind = el.dataset.k; pbList(); };
@@ -668,7 +686,7 @@ A['prebuilt-pick'] = el => {
   const value = items.reduce((s, x) => s + (priceEUR(x.c, x.foil) || 0) * x.n, 0);
   window.__pb = {name, items, lang: S.settings.defaultLang, fmt: /commander/i.test(type) ? 'commander' : /brawl/i.test(type) ? 'brawl' : 'standard'};
   items.sort((a, b) => (b.cmd - a.cmd) || (priceEUR(b.c, b.foil) || 0) - (priceEUR(a.c, a.foil) || 0));
-  openSheet(`<h2>${esc(name)}</h2><p class="muted small">${esc(type)} · ${total} Karten · Wert ca. <b class="gold">${money(value)}</b>${unknown ? ` · ${unknown} unbekannt` : ''}</p>
+  openSheet(`<h2>${esc(name)}</h2><p class="muted small">${esc(deckTypeDe(type))} · ${esc(setName(set))} · ${total} Karten · Wert ca. <b class="gold">${money(value)}</b>${unknown ? ` · ${unknown} unbekannt` : ''}</p>
     <label class="lbl">Sprache der Karten</label><div class="seg" id="pb-lang"><button class="${S.settings.defaultLang==='de'?'on':''}" data-act="pb-lang" data-l="de">Deutsch</button><button class="${S.settings.defaultLang==='en'?'on':''}" data-act="pb-lang" data-l="en">Englisch</button></div>
     <label class="row small"><input type="checkbox" id="pb-deck" checked> Auch als Deck speichern</label>
     <div class="actions"><button class="btn ghost" data-act="prebuilt">‹ Zurück</button><button class="btn" data-act="pb-add">Hinzufügen</button></div>
@@ -748,7 +766,7 @@ A['csv-export'] = () => {
     rows.push([e.q, e.c.o.name, e.c.s, e.c.n, LANG_CSV[e.lang] || e.lang, e.foil ? 'foil' : '', 'Near Mint', RAR_DE[e.c.r], (priceEUR(e.c, e.foil) || 0).toFixed(2), setName(e.c.s), e.c.o.de, e.c.sid]);
   saveFile('foxering-sammlung-' + stamp() + '.csv', 'text/csv', rows.map(r => r.map(csvCell).join(',')).join('\n'));
 };
-function backupJSON(){ return JSON.stringify({app:'foxering', v:1, date:new Date().toISOString(), coll:S.coll, decks:S.decks, settings:S.settings}); }
+function backupJSON(){ return JSON.stringify({app:'foxering', v:1, date:new Date().toISOString(), coll:S.coll, decks:S.decks, bundles:S.bundles, settings:S.settings}); }
 A['backup-export'] = () => saveFile('foxering-backup-' + stamp() + '.json', 'application/json', backupJSON());
 
 /* Automatisches Backup: nach jeder Änderung (gebündelt) und beim Verlassen der App */
@@ -761,7 +779,7 @@ function autoBackup(force){
   clearTimeout(abTimer);
   if(!abDirty && !force) return;
   if(!NATIVE || !NATIVE.saveFileReplace || S.settings.autoBackup === 'off') return;
-  if(!Object.keys(S.coll).length && !S.decks.length) return;
+  if(!Object.keys(S.coll).length && !S.decks.length && !S.bundles.length) return;
   abDirty = false;
   const json = backupJSON();
   const r = NATIVE.saveFileReplace('foxering-backup-aktuell.json', 'application/json', json);
@@ -783,7 +801,7 @@ A['backup-import'] = async () => {
   if(j.app !== 'foxering' || !j.coll){ toast('Keine Foxering-Backup-Datei'); return; }
   const ok = await ask('Backup laden?', 'Deine aktuelle Sammlung und Decks werden durch das Backup ersetzt.', [{l:'Abbrechen', v:false, c:'ghost'}, {l:'Ersetzen', v:true}]);
   if(!ok) return;
-  S.coll = j.coll; S.decks = j.decks || []; if(j.settings) Object.assign(S.settings, j.settings);
+  S.coll = j.coll; S.decks = j.decks || []; S.bundles = j.bundles || []; if(j.settings) Object.assign(S.settings, j.settings);
   await saveNow(); toast('Backup geladen ✓'); render();
 };
 A['coll-clear'] = async () => {
@@ -839,9 +857,13 @@ A['csv-import'] = async () => {
    ========================================================= */
 const ROTS = [0, 90, 270, 180];
 const SC = {on:false, paused:false, stream:null, busy:false, state:'search', last:null, lastN:0, lockSig:null, lastAdded:null, emptyRun:0, sawEmpty:true,
-  rot:0, goodRot:null, fail:0, session:[], torch:false, timer:null};
+  rot:0, goodRot:null, fail:0, session:[], torch:false, timer:null, target:null};
 const vid = $('#vid');
 
+/* Wohin gescannte Karten gehen: Sammlung (null) oder ein Bundle-Event */
+function scanTarget(){ return SC.target ? bundleById(SC.target) : null; }
+function putCard(item, n){ const b = item.target ? bundleById(item.target) : null; if(b) bundleAdd(b, item.c.id, item.lang, item.foil, n); else addCard(item.c.id, item.lang, item.foil, n); }
+function scanPrefer(){ const b = scanTarget(); if(!b || !b.prod || !b.prod.set) return null; const code = b.prod.set; const set = new Set([code, ...Object.values(S.sets).filter(s => s.parent === code).map(s => s.code)]); set.main = code; return set; }
 function scanStatus(t, cls){ $('#scan-status').textContent = t; const f = $('#frame'); f.classList.toggle('ok', cls === 'ok'); f.classList.toggle('read', cls === 'read'); }
 function scanOptsUI(){
   const s = S.settings;
@@ -854,10 +876,13 @@ function scanOptsUI(){
   $('#frame').className = 'frame size-' + (s.frame || 'm');
   $('#btn-torch').classList.toggle('on', SC.torch);
   const v = SC.session.reduce((sum, x) => sum + (priceEUR(x.c, x.foil) || 0), 0);
-  $('#scan-sum').textContent = `${SC.session.length} ${SC.session.length === 1 ? 'Karte' : 'Karten'} · ${money(v)}`;
+  const b = scanTarget();
+  $('#scan-sum').textContent = (b ? '🎁 ' + b.name + ' · ' : '') + `${SC.session.length} ${SC.session.length === 1 ? 'Karte' : 'Karten'} · ${money(v)}`;
 }
-A['scan-open'] = async () => {
+A['scan-open'] = () => startScan(null);
+async function startScan(target){
   if(!S.cards.length){ toast('Kartendaten fehlen noch'); return; }
+  if(SC.target !== target){ SC.session = []; SC.target = target; }
   $('#scan').hidden = false; SC.on = true; SC.paused = false; SC.state = 'search'; SC.last = null; SC.sawEmpty = true; SC.lastAdded = null;
   SC.rot = S.settings.rotation === 'auto' ? (SC.goodRot ?? 0) : +S.settings.rotation;
   scanOptsUI(); renderLast();
@@ -875,14 +900,14 @@ A['scan-open'] = async () => {
     scanStatus('Kamera nicht verfügbar');
     toast('Bitte erlaube den Kamerazugriff für Foxering', 4000);
   }
-};
+}
 function stopScanner(){
   SC.on = false; clearTimeout(SC.timer);
   if(SC.stream){ SC.stream.getTracks().forEach(t => t.stop()); SC.stream = null; }
   vid.srcObject = null; SC.torch = false;
   if(NATIVE) NATIVE.keepAwake(false);
 }
-A['scan-close'] = () => { stopScanner(); $('#scan').hidden = true; if(SC.session.length) toast(`${SC.session.length} Karten gescannt`); render(); };
+A['scan-close'] = () => { stopScanner(); $('#scan').hidden = true; if(SC.session.length) toast(`${SC.session.length} Karten gescannt` + (scanTarget() ? ' – im Bundle „' + scanTarget().name + '“' : '')); render(); };
 A['scan-size'] = () => { const o = ['s','m','l']; S.settings.frame = o[(o.indexOf(S.settings.frame || 'm') + 1) % 3]; persist(); scanOptsUI(); SC.state = 'search'; SC.last = null; };
 A['scan-pause'] = () => { SC.paused = !SC.paused; scanStatus(SC.paused ? 'Pausiert' : 'Lege eine Karte unter die Kamera'); scanOptsUI(); };
 A['scan-foil'] = () => { S.settings.foil = !S.settings.foil; persist(); scanOptsUI(); };
@@ -971,7 +996,7 @@ async function scanTick(){
   if(!SC.on || SC.paused) return;
   if(res.error){ scanStatus('Texterkennung: ' + res.error); return; }
   const nLines = (res.lines || []).length;
-  const r = ENGINE.identify(res);
+  const r = ENGINE.identify(res, {prefer: scanPrefer()});
 
   if(!r || r.empty){
     SC.last = null; SC.lastN = 0;
@@ -995,8 +1020,8 @@ async function scanTick(){
 }
 function confirmScan(r, sig){
   const foil = !!S.settings.foil;
-  addCard(r.c.id, r.lang, foil, 1);
-  const item = {sid: 'x' + Date.now() + Math.random(), c: r.c, lang: r.lang, foil, ambiguous: r.ambiguous, t: Date.now()};
+  const item = {sid: 'x' + Date.now() + Math.random(), c: r.c, lang: r.lang, foil, ambiguous: r.ambiguous, t: Date.now(), target: SC.target};
+  putCard(item, 1);
   SC.session.unshift(item); SC.lastAdded = item; SC.sawEmpty = false;
   SC.state = 'lock'; SC.lockSig = sig; SC.last = null; SC.lastN = 0;
   if(NATIVE){ if(S.settings.sound) NATIVE.beep(); if(S.settings.vibrate) NATIVE.vibrate(60); }
@@ -1016,18 +1041,19 @@ function renderLast(){
 function sessionItem(sid){ return SC.session.find(x => x.sid === sid); }
 A['scan-undo'] = el => {
   const x = sessionItem(el.dataset.sid); if(!x) return;
-  addCard(x.c.id, x.lang, x.foil, -1); SC.session = SC.session.filter(y => y !== x);
+  putCard(x, -1); SC.session = SC.session.filter(y => y !== x);
   if(SC.lastAdded === x) SC.lastAdded = null;
   renderLast(); scanOptsUI(); if(sheetOpen()) A['scan-list'](); toast('Entfernt: ' + cName(x.c));
 };
 function changeItem(x, patch){
-  addCard(x.c.id, x.lang, x.foil, -1); Object.assign(x, patch); addCard(x.c.id, x.lang, x.foil, 1);
+  putCard(x, -1); Object.assign(x, patch); putCard(x, 1);
   renderLast(); scanOptsUI();
 }
 let SE_Q = '';
 A['scan-edit'] = el => {
   const x = sessionItem(el.dataset.sid); if(!x) return;
-  const all = ENGINE.printings(x.c).sort(cmpNum);
+  const pref = scanPrefer();
+  const all = ENGINE.printings(x.c).sort((a, b) => (pref ? (pref.has(b.s) ? 1 : 0) - (pref.has(a.s) ? 1 : 0) : 0) || cmpNum(a, b));
   const q = ENGINE.norm(SE_Q);
   const prints = all.filter(p => !q || ENGINE.norm(p.s + ' ' + setName(p.s) + ' ' + p.n).includes(q)).slice(0, 40);
   openSheet(`<h2>${esc(cName(x.c, x.lang))}</h2><div class="muted small">${esc(cType(x.c, x.lang))}</div>
@@ -1053,8 +1079,8 @@ A['scan-list'] = () => {
 A['scan-manual'] = () => openSearch('Karte manuell hinzufügen', o => {
   const c = bestPrint(o); if(!c) return;
   const lang = S.settings.scanLang === 'auto' ? S.settings.defaultLang : S.settings.scanLang;
-  addCard(c.id, lang, !!S.settings.foil, 1);
-  const item = {sid:'x' + Date.now(), c, lang, foil: !!S.settings.foil, ambiguous:true, t:Date.now()};
+  const item = {sid:'x' + Date.now(), c, lang, foil: !!S.settings.foil, ambiguous:true, t:Date.now(), target: SC.target};
+  putCard(item, 1);
   SC.session.unshift(item); closeSheet(); renderLast(); scanOptsUI(); toast('Hinzugefügt: ' + oName(o) + ' – Druck mit ✎ wählen');
 });
 
@@ -1071,7 +1097,7 @@ window.__androidBack = () => {
   if(SEL){ selEnd(); return true; }
   if(!$('#scan').hidden){ A['scan-close'](); return true; }
   if(goBack()) return true;
-  if(S.ui.tab !== 'collection' || S.ui.deck || S.ui.assist){ Object.assign(S.ui, {tab:'collection', deck:null, assist:null}); render(); return true; }
+  if(S.ui.tab !== 'collection' || S.ui.deck || S.ui.assist || S.ui.bundle){ Object.assign(S.ui, {tab:'collection', deck:null, assist:null, bundle:null}); render(); return true; }
   return false;
 };
 window.__appPause = () => { saveNow(); try{ autoBackup(); }catch(e){} if(SC.on){ SC.paused = true; scanOptsUI(); scanStatus('Pausiert'); } };
@@ -1093,6 +1119,7 @@ async function firstRun(){
   }
   try{ await updateRates(LOCAL); }catch(e){ try{ await updateRates(); }catch(e2){} }
   try{ await updateMeta(LOCAL); }catch(e){ try{ await updateMeta(); }catch(e2){} }
+  try{ await updateProducts(LOCAL); }catch(e){ try{ await updateProducts(); }catch(e2){} }
   render(); backgroundRefresh();
 }
 /* Beim Start (und nach längerer Pause) alles aktualisieren: Karten, Preise, Kurse, Meta */
@@ -1105,6 +1132,7 @@ async function backgroundRefresh(){
   try{ const r = await updateData(false); changed = r !== 'same'; }catch(e){ errs++; console.warn(e); }
   try{ await updateRates(); }catch(e){ errs++; console.warn(e); }
   try{ await updateMeta(); }catch(e){ errs++; console.warn(e); }
+  try{ await updateProducts(); }catch(e){ console.warn(e); }
   refreshing = false;
   setSync(errs ? 'Offline – zeige gespeicherte Daten' : '✓ Alles aktuell');
   if(changed) softRender(); else setSync(S.syncMsg);
@@ -1117,6 +1145,7 @@ async function boot(){
   if(cd && cd.o && cd.p){ applyCards(cd); applyPrices(await DB.get('prices')); }
   const fx = await DB.get('rates'); if(fx){ S.rates = Object.assign({EUR:1}, fx.rates || {}); S.ratesDate = fx.date; }
   const mt = await DB.get('meta'); if(mt) S.meta = mt;
+  applyProducts(await DB.get('products'));
   if(!S.cards.length){ bootScreen('Starte …'); await firstRun(); }
   else { render(); backgroundRefresh(); }
 }

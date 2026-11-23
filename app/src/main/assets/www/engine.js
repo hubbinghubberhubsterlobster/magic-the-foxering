@@ -113,7 +113,7 @@ const ENGINE = (() => {
    * res: {lines:[{t,x,y,w,h}], w, h} aus der Texterkennung
    * Rückgabe: null | {empty:true} | {c, lang, strong, ambiguous, score}
    */
-  function identify(res){
+  function identify(res, opts={}){
     const I = idx();
     const raw = ((res && res.lines) || []).filter(l => String(l.t || '').trim());
     if(raw.length < 2) return {empty:true};
@@ -176,6 +176,14 @@ const ENGINE = (() => {
       strong = false;
     }
     if(!pick) return null;
+    // Bundle-Scan: gleichen Namen bevorzugt im Set des Bundles suchen (nicht wenn Set+Nummer gelesen wurden)
+    const pref = opts && opts.prefer;
+    if(pref && pick.s !== pref.main && !(col && col.set && col.num && pick.s === col.set)){
+      const all = S.byOracle.get(pick.o.i) || [], main = pref.main;
+      const inMain = main ? all.filter(c => c.s === main) : [];
+      const inPref = inMain.length ? inMain : all.filter(c => pref.has(c.s));
+      if(inPref.length){ pick = preferPrinting(inPref); ambiguous = inPref.length > 1; }
+    }
 
     // Sprache
     let lang = '';

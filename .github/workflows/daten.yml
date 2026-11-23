@@ -32,7 +32,7 @@ jobs:
         run: |
           mkdir -p old
           if git fetch --depth 1 origin gh-pages 2>/dev/null; then
-            for f in meta precons rates; do git show origin/gh-pages:data/$f.json > old/$f.json 2>/dev/null || rm -f old/$f.json; done
+            for f in meta precons rates products; do git show origin/gh-pages:data/$f.json > old/$f.json 2>/dev/null || rm -f old/$f.json; done
           fi
 
       - name: Daten erzeugen

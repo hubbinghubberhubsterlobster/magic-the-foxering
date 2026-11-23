@@ -25,7 +25,7 @@ jobs:
           D=app/src/main/assets/www/data
           mkdir -p $D
           if git fetch --depth 1 origin gh-pages 2>/dev/null && git show origin/gh-pages:data/cards.json > /dev/null 2>&1; then
-            for f in cards prices metadata meta rates precons; do git show origin/gh-pages:data/$f.json > $D/$f.json || true; done
+            for f in cards prices metadata meta rates precons products; do git show origin/gh-pages:data/$f.json > $D/$f.json || true; done
             echo "Daten von gh-pages übernommen"
           else
             node tools/build-data.mjs app/src/main/assets/www $D

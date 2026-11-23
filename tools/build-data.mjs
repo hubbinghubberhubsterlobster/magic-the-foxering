@@ -182,6 +182,49 @@ try{
 }
 
 /* =========================================================
+   2b) Produkte (Bundles, Displays …) mit deutschen Namen (MTGJSON)
+   ========================================================= */
+try{
+  const sl = (await get('https://mtgjson.com/api/v5/SetList.json')).data || [];
+  const setDe = {}, items = [], seen = new Set();
+  const ours = new Set(sets.map(x => x[0]));
+  const SUB = {play:'Play-Booster', draft:'Draft-Booster', set:'Set-Booster', collector:'Sammler-Booster', jumpstart:'Jumpstart-Booster', default:'Booster', premium:'Premium-Booster', theme:'Themen-Booster', vip:'VIP-Booster', six:'Booster', mini:'Mini-Booster', omega:'Omega-Booster', beginner:'Einsteiger-Booster'};
+  const kindOf = (cat, sub) => {
+    cat = String(cat || '').toLowerCase(); sub = String(sub || '').toLowerCase();
+    if(/case/.test(cat)) return null;
+    if(cat === 'bundle') return ['bundle', /gift/.test(sub) ? 'Geschenk-Bundle' : 'Bundle'];
+    if(cat === 'booster_box') return ['display', (SUB[sub] || 'Booster') + '-Display'];
+    if(cat === 'booster_pack') return ['booster', SUB[sub] || 'Booster'];
+    if(cat === 'prerelease_pack') return ['other', 'Prerelease-Pack'];
+    if(cat === 'box_set') return ['other', 'Box-Set'];
+    if(cat === 'starter_kit' || cat === 'two_player_starter_set') return ['other', 'Starter-Set'];
+    if(cat === 'draft_set') return ['other', 'Draft-Set'];
+    if(cat === 'land_station') return null;
+    return null;
+  };
+  for(const x of sl){
+    const code = String(x.code || '').toLowerCase();
+    const de = x.translations && (x.translations.German || x.translations.german || x.translations.de);
+    if(de && ours.has(code)) setDe[code] = de;
+    if(x.isOnlineOnly) continue;
+    for(const p of x.sealedProduct || []){
+      const k = kindOf(p.category, p.subtype); if(!k) continue;
+      const setLabel = de || x.name;
+      const nameDe = k[1] + ' – ' + setLabel;
+      const key = code + '|' + nameDe;
+      if(seen.has(key)) continue; seen.add(key);
+      items.push([ours.has(code) ? code : (x.parentCode || code).toLowerCase(), k[0], nameDe, p.name, p.releaseDate || x.releaseDate || '']);
+    }
+  }
+  items.sort((a, b) => b[4].localeCompare(a[4]) || a[2].localeCompare(b[2]));
+  write('products.json', {date, setDe, items});
+  console.log('✓ Produkte', items.length, '· deutsche Set-Namen', Object.keys(setDe).length);
+}catch(e){
+  console.warn('Produkte nicht geladen:', e.message);
+  const old = readOld('products.json'); if(old) write('products.json', old);
+}
+
+/* =========================================================
    3) Meta: Turnierdecks (MTGGoldfish) + Commander (EDHREC)
    ========================================================= */
 const oldMeta = readOld('meta.json') || {formats: {}, commanders: []};
