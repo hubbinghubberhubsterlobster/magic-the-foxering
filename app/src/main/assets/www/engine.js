@@ -51,13 +51,23 @@ const ENGINE = (() => {
     }
     for(const c of S.cards) byKey.set(c.s + ':' + String(c.n).toLowerCase(), c);
     const list = [...names.values()];
-    IDX = {names:list, full, byKey};
+    // Nach Länge (ohne Leerzeichen) einsortieren: beim Scannen werden nur Namen ähnlicher Länge verglichen
+    const byLen = [];
+    for(const e of list){ const k = e.n.replace(/ /g, '').length; (byLen[k] || (byLen[k] = [])).push(e); }
+    IDX = {names:list, full, byKey, byLen};
     return IDX;
   }
   function idx(){ return IDX || build(); }
 
   /* Unten links: Sammlernummer, Seltenheit, Set-Kürzel und Sprache */
   const LANGS = {EN:'en', DE:'de', FR:'fr', IT:'it', ES:'es', SP:'es', PT:'pt', JA:'ja', JP:'ja', KO:'ko', RU:'ru', CS:'zhs', CT:'zht', ZHS:'zhs', ZHT:'zht', PH:'ph'};
+  // typische Verwechslungen der Texterkennung in Set-Kürzeln (0/O, 1/I/L, 5/S, 8/B, 2/Z)
+  function fixSet(code){
+    const c = code.toLowerCase();
+    if(S.sets[c]) return c;
+    const tries = [c.replace(/0/g, 'o'), c.replace(/o/g, '0'), c.replace(/1/g, 'i'), c.replace(/i/g, '1'), c.replace(/l/g, '1'), c.replace(/5/g, 's'), c.replace(/s/g, '5'), c.replace(/8/g, 'b'), c.replace(/2/g, 'z')];
+    return tries.find(t => S.sets[t]) || '';
+  }
   function parseCollector(lines, h){
     const bottom = lines.filter(l => !h || l.y == null || l.y > h * 0.72);
     const pool = bottom.length ? bottom : lines;
@@ -65,8 +75,8 @@ const ENGINE = (() => {
     for(const l of pool){
       const t = ' ' + String(l.t || '').toUpperCase().replace(/[•·∙●◆*|]/g, ' • ') + ' ';
       // Set + Sprache: "MH3 • DE", "M20 * EN", "DMU-EN"
-      const sm = t.match(/[\s(]([A-Z0-9]{3,5})\s*(?:•|\.|,|-|\+|:)?\s*(EN|DE|FR|IT|ES|SP|PT|JA|JP|KO|RU|CS|CT|ZHS|ZHT|PH)\b/);
-      if(sm && S.sets[sm[1].toLowerCase()] && !set){ set = sm[1].toLowerCase(); lang = LANGS[sm[2]] || ''; }
+      const sm = t.match(/[\s(]([A-Z0-9]{3,5})\s*(?:•|\.|,|-|\+|:|»|>)?\s*(EN|DE|FR|IT|ES|SP|PT|JA|JP|KO|RU|CS|CT|ZHS|ZHT|PH)\b/);
+      if(sm && !set){ const fs = fixSet(sm[1]); if(fs){ set = fs; lang = LANGS[sm[2]] || ''; } }
       if(!num){
         // Alt: "123/274 R"  ·  Neu: "0123 R" oder "R 0123"
         const fix = t.replace(/(\d)O/g, '$10').replace(/O(\d)/g, '0$1');
@@ -79,19 +89,32 @@ const ENGINE = (() => {
     return {set, lang, num};
   }
 
+  /* Varianten einer Namenszeile: ohne angehängte Reste (Manakosten werden oft als „3G“, „1OO“, „@“ gelesen) */
+  function lineVariants(n){
+    const out = [{n, f:1}], w = n.split(' ');
+    // nur Wörter abschneiden, die nach Manakosten aussehen (Ziffern oder sehr kurz) – echte Namensteile bleiben
+    for(let k = 1; k <= 2 && w.length - k >= 1; k++){
+      const t = w[w.length - k];
+      if(!(/\d/.test(t) || t.length <= 3)) break;
+      const v = w.slice(0, w.length - k).join(' ');
+      if(v.replace(/ /g, '').length >= 3) out.push({n:v, f:0.97});
+    }
+    return out;
+  }
   /* Die besten Namens-Treffer für die oberen Zeilen der Karte */
   function nameCandidates(nameLines){
     const I = idx(), cand = new Map();
     for(const l of nameLines){
-      const len = l.n.replace(/ /g, '').length;
-      for(const e of I.names){
-        const el = e.n.length;
-        if(l.n !== e.n && (el > len + Math.max(4, len * 0.45) + 2 || el < len - Math.max(4, len * 0.45))) continue;
-        const s = sim(e, l);
-        if(s < 0.62) continue;
-        for(const oi of e.os){
-          const prev = cand.get(oi);
-          if(!prev || s > prev.s) cand.set(oi, {o:S.oracle[oi], s, langs:e.langs, n:e.n});
+      for(const {n:v, f} of lineVariants(l.n)){
+        const vl = v === l.n ? l : {n:v, bg:bg(v)};
+        const len = v.replace(/ /g, '').length, d = Math.max(4, len * 0.45);
+        for(let k = Math.max(1, Math.floor(len - d)); k <= Math.ceil(len + d + 2); k++){
+          const bucket = I.byLen[k]; if(!bucket) continue;
+          for(const e of bucket){
+            const s = sim(e, vl) * f;
+            if(s < 0.62) continue;
+            for(const oi of e.os){ const prev = cand.get(oi); if(!prev || s > prev.s) cand.set(oi, {o:S.oracle[oi], s, langs:e.langs, n:e.n}); }
+          }
         }
       }
     }
@@ -128,13 +151,28 @@ const ENGINE = (() => {
 
     // Name steht oben: nach Höhe sortieren und die obersten Zeilen nehmen
     const withY = lines.filter(l => l.y != null);
-    let nameLines = withY.length >= lines.length * 0.7 && H
-      ? withY.filter(l => l.y < H * 0.22).sort((a, b) => a.y - b.y).slice(0, 3)
-      : lines.slice(0, 3);
+    // gemessen am erkannten Text, nicht am Rahmen – klappt auch, wenn die Karte kleiner ist oder verschoben liegt
+    let nameLines;
+    if(withY.length >= lines.length * 0.7 && withY.length >= 2){
+      const top = Math.min(...withY.map(l => l.y)), span = Math.max(1, Math.max(...withY.map(l => l.y)) - top);
+      nameLines = withY.filter(l => l.y - top <= span * 0.2).sort((a, b) => a.y - b.y).slice(0, 3);
+    } else nameLines = lines.slice(0, 3);
     if(!nameLines.length) nameLines = lines.slice(0, 3);
 
     const col = parseCollector(raw, H);
     const cand = nameCandidates(nameLines);
+    // Gleichstand bei ähnlichen Namen? Typzeile und Regeltext entscheiden mit
+    if(cand.length){
+      const rest = lines.filter(l => !nameLines.includes(l));
+      const best = (txt, cut) => { if(!txt) return 0; const tb = bg(norm(txt).slice(0, cut)); let m = 0; for(const l of rest){ const d = dice(tb, l.bg); if(d > m) m = d; } return m; };
+      const lim = cand[0].s - 0.15;
+      for(const x of cand){
+        if(x.s < lim){ x.t = 0; x.s2 = x.s - 0.06; continue; }
+        x.t = Math.max(best(x.o.type.split(' // ')[0], 60), best((x.o.typeDe || '').split(' // ')[0], 60), best(x.o.txt.replace(/\(.*?\)/g, ''), 38));
+        x.s2 = x.s + 0.12 * (x.t - 0.5);
+      }
+      cand.sort((a, b) => b.s2 - a.s2);
+    }
     const top = cand[0];
     let pick = null, strong = false, ambiguous = false, L = null;
 
@@ -156,7 +194,7 @@ const ENGINE = (() => {
       }
     }
     // 2) Nur das Set gelesen → Druck dieser Karte im Set
-    if(!pick && top && top.s >= 0.78 && col && col.set){
+    if(!pick && top && (top.s >= 0.78 || (top.s >= 0.7 && top.t >= 0.75)) && col && col.set){
       const inSet = (S.byOracle.get(top.o.i) || []).filter(c => c.s === col.set);
       if(inSet.length){
         const byNum = col.num ? inSet.find(c => String(c.n).toLowerCase() === col.num) : null;
@@ -167,8 +205,8 @@ const ENGINE = (() => {
     }
     // 3) Nur über den Namen
     if(!pick && top){
-      if(top.s < 0.78) return null;
-      const rival = cand.find(x => x.o !== top.o && x.s > top.s - 0.06);
+      if(top.s < 0.78 && !(top.s >= 0.7 && top.t >= 0.75)) return null;
+      const rival = cand.find(x => x.o !== top.o && x.s2 > top.s2 - 0.06);
       if(rival) return null;
       const prints = S.byOracle.get(top.o.i) || [];
       if(!prints.length) return null;

@@ -1012,10 +1012,15 @@ async function scanTick(){
   if(S.settings.rotation === 'auto' && SC.goodRot !== SC.rot){ SC.goodRot = SC.rot; scanOptsUI(); }
 
   const need = Math.max(1, +S.settings.confirm || 2);
-  if(SC.last && SC.last.c.id === r.c.id && SC.last.lang === r.lang) SC.lastN++; else { SC.last = r; SC.lastN = 1; }
+  // Gleiche Karte zählt als Bestätigung, auch wenn die Sammlernummer nur in manchen Bildern lesbar war.
+  // Behalten wird das genaueste Ergebnis (mit gelesenem Set/Nummer bzw. Sprache).
+  const detail = x => (x.strong ? 4 : 0) + (x.col && x.col.num ? 2 : 0) + (x.col && x.col.lang ? 1 : 0);
+  if(SC.last && SC.last.c.o === r.c.o){ SC.lastN++; if(detail(r) >= detail(SC.last)) SC.last = r; }
+  else { SC.last = r; SC.lastN = 1; }
   if(r.strong || SC.lastN >= need){
-    if(SC.lastAdded && SC.lastAdded.c.o === r.c.o && !SC.sawEmpty){ SC.state = 'lock'; SC.lockSig = sig; scanStatus('✓ ' + cName(r.c) + ' – nächste Karte', 'ok'); return; }
-    confirmScan(r, sig);
+    const best = SC.last;
+    if(SC.lastAdded && SC.lastAdded.c.o === best.c.o && !SC.sawEmpty){ SC.state = 'lock'; SC.lockSig = sig; scanStatus('✓ ' + cName(best.c) + ' – nächste Karte', 'ok'); return; }
+    confirmScan(best, sig);
   } else scanStatus('Erkenne: ' + cName(r.c, r.lang), 'read');
 }
 function confirmScan(r, sig){
