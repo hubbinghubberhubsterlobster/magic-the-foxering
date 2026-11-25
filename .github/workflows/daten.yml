@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: daten
@@ -51,3 +53,23 @@ jobs:
           publish_branch: gh-pages
           force_orphan: true
           commit_message: Daten vom
+
+      # Web-Version (iPhone) über GitHub Pages veröffentlichen (Quelle: GitHub Actions)
+      - name: Pages vorbereiten
+        uses: actions/configure-pages@v5
+
+      - name: Seite hochladen
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+  pages:
+    needs: data
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Auf GitHub Pages veröffentlichen
+        id: deploy
+        uses: actions/deploy-pages@v4
