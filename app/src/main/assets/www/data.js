@@ -98,16 +98,67 @@ const DB = {
 let saveTimer = null;
 let QIDX = null;
 function persist(){ QIDX = null; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 250); if(window.scheduleAutoBackup) window.scheduleAutoBackup(); }
+/* Datenschutz: ein leerer Stand überschreibt nie eine volle Sammlung (außer man leert sie bewusst),
+   und es gibt rollierende Sicherheitskopien (IndexedDB + localStorage), aus denen man wiederherstellen kann. */
+let ALLOW_EMPTY = false;
+let USER_LOADED = false;  // vor dem Laden wird nie gespeichert   // nur für bewusstes Leeren / Backup laden
+let SAVED_N = -1;          // Umfang des zuletzt gespeicherten bzw. geladenen Stands
+let SAVED_JSON = '';
+function userData(){ return {coll:S.coll, decks:S.decks, bundles:S.bundles, partners:S.partners, settings:S.settings}; }
+function userSize(u){
+  if(!u) return 0;
+  let n = 0; for(const k in (u.coll || {})) n += (u.coll[k] && u.coll[k].q) || 0;
+  return n + (u.decks || []).length + (u.bundles || []).length + (u.partners || []).length;
+}
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); return true; }catch(e){ return false; } }
+async function safeList(){
+  let a = null; try{ a = await DB.get('safe'); }catch(e){}
+  if(!Array.isArray(a)) a = [];
+  try{ const p = JSON.parse(lsGet('mf-user-prev') || 'null'); if(p && p.t && !a.some(x => x.t === p.t)) a.push(p); }catch(e){}
+  return a.filter(x => x && x.json && x.n > 0).sort((x, y) => y.t - x.t);
+}
+async function safeAdd(json, n){
+  if(!(n > 0) || !json) return;
+  const list = await safeList();
+  if(list[0] && list[0].json === json) return;
+  list.unshift({t:Date.now(), n, json});
+  // behalten: die 6 neuesten + den letzten Stand jedes der letzten 7 Tage + den größten Stand
+  const keep = new Set(list.slice(0, 6));
+  const days = new Map(); for(const x of list){ const d = new Date(x.t).toDateString(); if(!days.has(d)) days.set(d, x); }
+  [...days.values()].slice(0, 7).forEach(x => keep.add(x));
+  keep.add(list.reduce((a, b) => b.n > a.n ? b : a));
+  const out = list.filter(x => keep.has(x));
+  try{ await DB.set('safe', out); }catch(e){}
+  lsSet('mf-user-prev', JSON.stringify(list.reduce((a, b) => b.n > a.n ? b : a, list[0])));
+}
+let lastSafe = 0;
 async function saveNow(){
   clearTimeout(saveTimer); QIDX = null;
-  const data = {coll:S.coll, decks:S.decks, bundles:S.bundles, partners:S.partners, settings:S.settings};
-  try{ localStorage.setItem('mf-user', JSON.stringify(data)); }catch(e){}
+  if(!USER_LOADED) return;
+  const data = userData(), n = userSize(data);
+  const storedN = SAVED_N >= 0 ? SAVED_N : +(lsGet('mf-n') || 0);
+  if(n === 0 && storedN > 0 && !ALLOW_EMPTY){ console.warn('Leerer Stand – Speichern verhindert (gespeichert:', storedN, ')'); return; }
+  const json = JSON.stringify(data);
+  if(json === SAVED_JSON) return;
+  // starker Rückgang ohne bewusste Aktion → vorherigen Stand vorher sichern
+  if(SAVED_JSON && SAVED_N >= 10 && n < SAVED_N * 0.6) await safeAdd(SAVED_JSON, SAVED_N);
+  lsSet('mf-user', json); lsSet('mf-n', String(n));
   try{ await DB.set('user', data); }catch(e){}
+  SAVED_JSON = json; SAVED_N = n; ALLOW_EMPTY = false;
+  if(n > 0 && Date.now() - lastSafe > 10 * 60000){ lastSafe = Date.now(); safeAdd(json, n); }
 }
 async function loadUser(){
-  let u = await DB.get('user');
-  if(!u){ try{ u = JSON.parse(localStorage.getItem('mf-user') || 'null'); }catch(e){ u = null; } }
+  let a = null, b = null;
+  try{ a = await DB.get('user'); }catch(e){}
+  try{ b = JSON.parse(lsGet('mf-user') || 'null'); }catch(e){}
+  // den umfangreicheren Stand nehmen, falls einer der beiden Speicher leer oder veraltet ist
+  const u = userSize(b) > userSize(a) ? b : (a || b);
   if(u){ S.coll = u.coll || {}; S.decks = u.decks || []; S.bundles = u.bundles || []; S.partners = u.partners || []; Object.assign(S.settings, u.settings || {}); }
+  SAVED_N = Math.max(userSize(u), +(lsGet('mf-n') || 0));
+  SAVED_JSON = u ? JSON.stringify(userData()) : '';
+  USER_LOADED = true;
+  if(userSize(u) > 0){ lastSafe = Date.now(); safeAdd(SAVED_JSON, userSize(u)); }
 }
 
 /* ---------- Kartenkatalog ---------- */

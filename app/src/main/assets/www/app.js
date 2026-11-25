@@ -129,6 +129,7 @@ function renderCollection(){
       <div class="tiny" style="color:#b9b3dc;margin-top:8px">Cardmarket-Trendpreise · Stand ${fmtDate(S.priceDate)}</div>
       <div class="tiny" id="sync" style="color:#9fe3bf;margin-top:2px">${esc(S.syncMsg || '')}</div>
     </div>
+    ${safetyBanner(st)}
     <div class="seg"><button class="${u.mode==='owned'?'on':''}" data-act="mode" data-m="owned">Meine Karten</button><button class="${u.mode==='all'?'on':''}" data-act="mode" data-m="all">Alle Karten</button></div>
     <div class="search">${ICON_SEARCH}<input id="q" placeholder="Name (DE/EN), Typ oder z. B. „MH3 123“" value="${esc(u.q)}"></div>
     <div class="row" style="margin-bottom:12px"><div class="chips grow">${colorButtons(u.cols, 'col')}</div>
@@ -863,9 +864,10 @@ function renderMore(){
         <button class="item" style="width:100%" data-act="csv-import">📥 CSV importieren (Moxfield, Manabox, Deckbox, Dragon Shield …)</button>
         <button class="item" style="width:100%" data-act="backup-now">💾 Backup jetzt speichern</button>
         <button class="item" style="width:100%" data-act="backup-import">♻️ Backup laden (wiederherstellen)</button>
+        <button class="item" style="width:100%" data-act="safe-list">🛟 Sicherheitskopien (automatisch in der App)</button>
         <button class="item" style="width:100%;color:var(--bad)" data-act="coll-clear">🗑️ Sammlung leeren</button>
       </div>
-      ${WEB ? `<p class="tiny muted">Deine Sammlung liegt nur in diesem Browser auf diesem Gerät. Speichere ab und zu ein Backup („Backup jetzt speichern“ → in „Dateien“ sichern) – damit kannst du alles wiederherstellen.</p></div>` : `<label class="lbl">Automatisches Backup</label>${sel('autoBackup', [['on','An (empfohlen)'],['off','Aus']], s.autoBackup === 'off' ? 'off' : 'on')}
+      ${WEB ? `<p class="tiny muted">Deine Sammlung liegt nur in diesem Browser auf diesem Gerät. Speichere ab und zu ein Backup („Backup jetzt speichern“ → in „Dateien“ sichern) – damit kannst du alles wiederherstellen.${IOS ? ' <b>Wichtig auf dem iPhone:</b> Safari, Chrome, jedes In-App-Fenster (z. B. aus WhatsApp) und das Icon auf dem Home-Bildschirm haben jeweils einen eigenen Speicher – öffne Foxering immer auf demselben Weg und nie im privaten/Inkognito-Tab.' : ''} Letztes Backup: <b>${lastBackup() ? fmtDate(new Date(lastBackup()).toISOString()) : 'noch keins'}</b>.</p></div>` : `<label class="lbl">Automatisches Backup</label>${sel('autoBackup', [['on','An (empfohlen)'],['off','Aus']], s.autoBackup === 'off' ? 'off' : 'on')}
       <p class="tiny muted">Nach jeder Änderung speichert die App automatisch ein Backup in <b>Download/Foxering</b>: „foxering-backup-aktuell.json“ plus eins pro Wochentag. Die Dateien bleiben auch erhalten, wenn die App gelöscht wird. Letztes Backup: <b>${lastBackup() ? fmtDate(new Date(lastBackup()).toISOString()) : 'noch keins'}</b>.</p></div>`}
     <p class="tiny muted" style="margin-top:16px">Magic the Foxering ${NATIVE ? 'v' + esc(NATIVE.version()) : '(Browser)'} · Kartendaten, Bilder & Preise: Scryfall (Cardmarket-Trendpreise) · Fertigdecks: MTGJSON · Meta: MTGGoldfish & EDHREC · Kurse: EZB. Inoffizielle Fan-App. Magic: The Gathering ist eine Marke von Wizards of the Coast; Kartenbilder © Wizards of the Coast.</p>`;
   $$('select[data-set]', view).forEach(el => el.onchange = () => {
@@ -899,7 +901,40 @@ A['csv-export'] = () => {
   saveFile('foxering-sammlung-' + stamp() + '.csv', 'text/csv', rows.map(r => r.map(csvCell).join(',')).join('\n'));
 };
 function backupJSON(){ return JSON.stringify({app:'foxering', v:1, date:new Date().toISOString(), coll:S.coll, decks:S.decks, bundles:S.bundles, partners:S.partners, settings:S.settings}); }
-A['backup-export'] = () => saveFile('foxering-backup-' + stamp() + '.json', 'application/json', backupJSON());
+A['backup-export'] = () => { saveFile('foxering-backup-' + stamp() + '.json', 'application/json', backupJSON()); try{ localStorage.setItem('mf-lastbackup', String(Date.now())); }catch(e){} if(S.tab === 'collection') render(); };
+
+/* Hinweise oben in der Sammlung: Sicherheitskopie anbieten, wenn alles leer ist; im Browser ans Backup erinnern */
+function safetyBanner(st){
+  const o = S.ui.safeOffer;
+  if(o && !st.total && !S.decks.length) return `<div class="card" style="margin:12px 0;border:1px solid var(--accent)"><b>🛟 Sicherheitskopie gefunden</b>
+    <p class="small muted" style="margin:6px 0">Vom ${new Date(o.t).toLocaleString('de-DE', {dateStyle:'medium', timeStyle:'short'})} mit ${o.n} Einträgen. Hier ist gerade alles leer – soll ich sie wiederherstellen?</p>
+    <div class="row" style="gap:8px"><button class="btn small" data-act="safe-restore" data-t="${o.t}">Wiederherstellen</button><button class="btn small ghost" data-act="safe-list">Alle Kopien</button><button class="btn small ghost" data-act="safe-dismiss">Nein</button></div></div>`;
+  if(!WEB || st.total < 20) return '';
+  const lb = lastBackup(), days = lb ? (Date.now() - lb) / 864e5 : 99;
+  let snooze = 0; try{ snooze = +(localStorage.getItem('mf-bk-snooze') || 0); }catch(e){}
+  if(days < 3 || Date.now() < snooze) return '';
+  return `<div class="card" style="margin:12px 0;border:1px solid #E3B65C"><b>💾 Backup speichern</b>
+    <p class="small muted" style="margin:6px 0">${lb ? `Dein letztes Backup ist ${Math.floor(days)} Tage alt.` : 'Du hast noch kein Backup.'} Im Browser liegt deine Sammlung nur auf diesem Gerät – und nur in genau diesem Browser${IOS ? ' (Safari, Chrome und das Icon auf dem Home-Bildschirm haben jeweils einen eigenen Speicher)' : ''}. Löscht der Browser seine Daten, ist sie weg.</p>
+    <div class="row" style="gap:8px"><button class="btn small" data-act="backup-export">Backup jetzt speichern</button><button class="btn small ghost" data-act="bk-snooze">Später</button></div></div>`;
+}
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+A['bk-snooze'] = () => { try{ localStorage.setItem('mf-bk-snooze', String(Date.now() + 864e5)); }catch(e){} render(); };
+A['safe-dismiss'] = () => { S.ui.safeOffer = null; render(); };
+async function restoreSafe(t){
+  const x = (await safeList()).find(y => y.t === t); if(!x) { toast('Kopie nicht gefunden'); return; }
+  let j; try{ j = JSON.parse(x.json); }catch(e){ toast('Kopie beschädigt'); return; }
+  if(userSize(userData()) > 0) await safeAdd(JSON.stringify(userData()), userSize(userData()));
+  S.coll = j.coll || {}; S.decks = j.decks || []; S.bundles = j.bundles || []; S.partners = j.partners || []; if(j.settings) Object.assign(S.settings, j.settings);
+  S.ui.safeOffer = null; ALLOW_EMPTY = true; await saveNow(); toast('Sicherheitskopie wiederhergestellt ✓', 3000); render();
+}
+A['safe-restore'] = el => restoreSafe(+el.dataset.t);
+A['safe-list'] = async () => {
+  const list = await safeList();
+  if(!list.length){ toast('Noch keine Sicherheitskopien'); return; }
+  const v = await ask('Sicherheitskopien', 'Die App sichert deinen Stand automatisch (alle 10 Minuten bei Änderungen, je einer pro Tag). Welchen Stand möchtest du wiederherstellen? Der aktuelle Stand wird vorher selbst als Kopie gesichert.',
+    [...list.map(x => ({l:`${new Date(x.t).toLocaleString('de-DE', {dateStyle:'short', timeStyle:'short'})} · ${x.n} Einträge`, v:x.t, c:'ghost'})), {l:'Abbrechen', v:null}]);
+  if(v) restoreSafe(v);
+};
 
 /* Automatisches Backup: nach jeder Änderung (gebündelt) und beim Verlassen der App */
 const WDAYS = ['So','Mo','Di','Mi','Do','Fr','Sa'];
@@ -933,12 +968,13 @@ A['backup-import'] = async () => {
   if(j.app !== 'foxering' || !j.coll){ toast('Keine Foxering-Backup-Datei'); return; }
   const ok = await ask('Backup laden?', 'Deine aktuelle Sammlung und Decks werden durch das Backup ersetzt.', [{l:'Abbrechen', v:false, c:'ghost'}, {l:'Ersetzen', v:true}]);
   if(!ok) return;
+  await safeAdd(JSON.stringify(userData()), userSize(userData()));
   S.coll = j.coll; S.decks = j.decks || []; S.bundles = j.bundles || []; S.partners = j.partners || []; if(j.settings) Object.assign(S.settings, j.settings);
-  await saveNow(); toast('Backup geladen ✓'); render();
+  ALLOW_EMPTY = true; await saveNow(); toast('Backup geladen ✓'); render();
 };
 A['coll-clear'] = async () => {
   const ok = await ask('Sammlung leeren?', 'Alle Karten werden aus deiner Sammlung entfernt. Decks bleiben erhalten. Tipp: vorher ein Backup speichern.', [{l:'Abbrechen', v:false, c:'ghost'}, {l:'Leeren', v:true, c:'danger'}]);
-  if(ok){ S.coll = {}; persist(); toast('Sammlung geleert'); render(); }
+  if(ok){ await safeAdd(JSON.stringify(userData()), userSize(userData())); S.coll = {}; ALLOW_EMPTY = true; await saveNow(); toast('Sammlung geleert – über Mehr → Sicherheitskopien wiederherstellbar', 3500); render(); }
 };
 /* Kartenliste aus einer Datei lesen: CSV von Moxfield, Manabox, Archidekt, Deckbox, Dragon Shield, Foxering & Co. –
    oder eine Textliste („4 Lightning Bolt“, „1 Sol Ring (CMM) 400 *F*“). Rückgabe: {out:[{c, lang, foil, n}], bad:[Zeilen]} */
@@ -997,7 +1033,7 @@ A['csv-import'] = async () => {
   const mode = await ask('CSV importieren', `${total} Karten erkannt${bad.length ? `, ${bad.length} Zeile(n) nicht zugeordnet` : ''}. Wie soll ich sie übernehmen?`,
     [{l:'Zur Sammlung hinzufügen', v:'add'}, {l:'Sammlung ersetzen', v:'replace', c:'ghost'}, {l:'Abbrechen', v:null, c:'ghost'}]);
   if(!mode) return;
-  if(mode === 'replace') S.coll = {};
+  if(mode === 'replace'){ await safeAdd(JSON.stringify(userData()), userSize(userData())); S.coll = {}; }
   for(const x of out) addCard(x.c.id, x.lang, x.foil, x.n);
   await saveNow(); toast(`${total} Karten importiert ✓`, 3000); render();
 };
@@ -1367,6 +1403,7 @@ async function boot(){
   try{ await DB.open(); }catch(e){ console.warn('IndexedDB', e); }
   if(WEB && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   await loadUser();
+  if(!userSize(userData())){ try{ const l = await safeList(); if(l.length) S.ui.safeOffer = l.reduce((a, b) => b.n > a.n ? b : a); }catch(e){} }
   const cd = await DB.get('cards');
   if(cd && cd.o && cd.p){ applyCards(cd); applyPrices(await DB.get('prices')); }
   const fx = await DB.get('rates'); if(fx){ S.rates = Object.assign({EUR:1}, fx.rates || {}); S.ratesDate = fx.date; }
