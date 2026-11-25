@@ -31,9 +31,14 @@ Neue Versionen installieren sich als Update, die Sammlung bleibt erhalten.
   zugeordnet: holst du eine Karte in ein anderes Deck, fehlt sie im alten.
 - **Fertigdecks:** „Decks → Fertigdeck gekauft“ fügt alle Karten eines Commander-, Starter- oder
   Planeswalker-Decks auf einmal hinzu (Daten: MTGJSON).
-- **Deck-Assistent:** baut die stärksten Decks aus deinen Karten, zeigt die aktuelle Turnier-Meta
-  (MTGGoldfish) und beliebte Commander mit Empfehlungen (EDHREC), schlägt fehlende Karten mit
-  Preis vor und bewertet deine Decks (Stufe S–D) inklusive Spielanleitung.
+- **Deckbuilder:** Empfehlungen aus deinen Karten (Filter: Beste, Stufe, sofort spielbar, Aggro/Midrange/Kontrolle,
+  Schalter „Turnierspielbar“), selbst bauen oder nach Wünschen bauen lassen; Meta-Decks (MTGGoldfish) und
+  beliebte Commander (EDHREC) unter „Mehr“; Bewertung S–D inklusive Spielanleitung.
+- **Bundle-Events:** gekauftes Bundle anlegen, Karten getrennt hineinscannen oder als Datei importieren,
+  Decks nur aus dem Bundle bauen, später in die Sammlung übernehmen oder als normales Deck kopieren.
+- **Zusammensuchen:** Abhak-Liste für ein Deck, sortiert nach Farbe und Manawert, mit Druck und Fundort.
+- **Koop:** Sammlung eines Mitspielers laden (Backup/CSV) und ausgeglichene Duell-Decks für euch beide finden.
+- **iPhone:** schlanke Texterkennung im Browser, alternativ Foto-Erkennung (📸).
 - **Import/Export:** CSV (Moxfield, Manabox, Deckbox …), Decklisten als Text (Moxfield/Arena),
   automatisches Backup als JSON in `Download/Foxering`.
 

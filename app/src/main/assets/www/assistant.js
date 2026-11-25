@@ -7,16 +7,19 @@
    - bewertet deine Decks (Stufe S–D) und erklärt, wie man sie spielt
    ========================================================= */
 const ASSIST = (() => {
-  const st = {fmt:'commander', mode:'owned', cols:[], style:'midrange', cmd:null, results:null, sel:0, title:'', meta:null, metaFmt:null, pool:null};
+  let OWN_OVERRIDE = null, LEGAL = true;   // Koop: andere Sammlung · Turnierspielbar aus: Format-Verbote ignorieren
+  const st = {tourney:true, filter:'best', metaFmtSel:'standard', fmt:'commander', mode:'owned', cols:[], style:'midrange', cmd:null, results:null, sel:0, title:'', meta:null, metaFmt:null, pool:null};
   const STYLES = {aggro:'Aggro (schnell)', midrange:'Midrange (ausgewogen)', control:'Control (kontrollierend)'};
-  const FMTS = ['commander','standard','pioneer','modern','pauper','legacy'];
-  const POOL_FMTS = ['limited','standard','pioneer','modern','pauper','commander'];
+  const FMTS = ['commander','casual','standard','pioneer','modern','pauper','legacy'];
+  const META_FMTS = ['standard','pioneer','modern','pauper','legacy','commander'];
+  const POOL_FMTS = ['limited','casual','commander'];
   /* Karten, aus denen gebaut wird: ein Bundle (st.pool) oder die ganze Sammlung */
   function poolBundle(){ return st.pool ? bundleById(st.pool) : null; }
-  function poolOwn(){ const b = poolBundle(); return b ? bundleOwned(b) : ownedByOracle(); }
+  function poolOwn(){ if(OWN_OVERRIDE) return OWN_OVERRIDE; const b = poolBundle(); return b ? bundleOwned(b) : ownedByOracle(); }
   function poolPrint(o){
     const b = poolBundle();
-    if(b){ let best = null, bq = 0; for(const e of bundleEntries(b)) if(e.c.o === o && e.q > bq){ bq = e.q; best = e.c; } if(best) return best; }
+    if(b && !OWN_OVERRIDE){ let best = null, bq = 0; for(const e of bundleEntries(b)) if(e.c.o === o && e.q > bq){ bq = e.q; best = e.c; } if(best) return best; }
+    if(OWN_OVERRIDE) return ENGINE.preferPrinting(S.byOracle.get(o.i) || []);
     return bestPrint(o);
   }
   function poolName(){ const b = poolBundle(); return b ? b.name : ''; }
@@ -98,9 +101,9 @@ const ASSIST = (() => {
     const LANDS = lim ? 17 : {aggro:22, midrange:24, control:25}[style], NL = SIZE - LANDS;
     const CRE = lim ? {aggro:17, midrange:15, control:12}[style] : {aggro:18, midrange:13, control:6}[style];
     const BIG = lim ? {aggro:2, midrange:4, control:5}[style] : {aggro:2, midrange:6, control:8}[style];
-    const ok = o => legalIn(o, fmt) && ciList(o).every(k => cols.includes(k)) && !/\b(Conspiracy|Scheme|Plane|Phenomenon|Dungeon)\b/.test(o.type);
+    const ok = o => (!LEGAL || legalIn(o, fmt)) && ciList(o).every(k => cols.includes(k)) && !/\b(Conspiracy|Scheme|Plane|Phenomenon|Dungeon)\b/.test(o.type);
     const nonland = [], lands = [];
-    for(const o of S.oracle){
+    for(const o of buy ? S.oracle : [...own.keys()].map(i => S.oracle[i])){
       if(isBasic(o) || !(own.get(o.i) || buy) || !ok(o)) continue;
       if(isLand(o)){ if(ciList(o).length) lands.push({o, s: cardScore(o, fmt)}); continue; }
       if(!lim && cols.length && !colList(o).length && power(o) < 0.5) continue;   // farblose Füller nur, wenn sie gut sind
@@ -147,11 +150,12 @@ const ASSIST = (() => {
   }
 
   /* ---------- Commander (100 Karten) ---------- */
-  async function recsFor(name){
+  async function recsFor(name, noFetch){
     const m = S.meta && (S.meta.commanders || []).find(c => c.name === name);
     if(m && m.recs && m.recs.length) return new Map(m.recs.map(r => [r[0], {rate:r[1] / 100, syn:r[2] / 100, tag:r[3]}]));
     if(ER.has(name)) return ER.get(name);
     let map = new Map();
+    if(noFetch) return map;
     try{
       const j = await getJSON('https://json.edhrec.com/pages/commanders/' + edhSlug(name) + '.json');
       map = new Map(parseEdhrec(j).filter(x => x.name !== name).map(x => [x.name, {rate:x.rate, syn:x.syn, tag:x.tag}]));
@@ -159,15 +163,15 @@ const ASSIST = (() => {
     ER.set(name, map);
     return map;
   }
-  async function buildCommander(cmdPrint, mode){
+  async function buildCommander(cmdPrint, mode, opt={}){
     const cmd = cmdPrint.o, ci = ciList(cmd), best = mode === 'best';
     const own = poolOwn(); if(st.pool) mode = 'owned'; const best2 = mode === 'best';
-    const recs = await recsFor(cmd.name);
+    const recs = await recsFor(cmd.name, opt.noFetch);
     const sc = o => { const r = recs.get(o.name) || recs.get(o.name.split(' // ')[0]); return r ? 0.35 + r.rate * 0.6 + Math.max(0, r.syn) * 0.5 : power(o) * 0.55; };
-    const ok = o => o !== cmd && legalIn(o, 'commander') && ciList(o).every(k => ci.includes(k)) && !isBasic(o) && (best2 || own.get(o.i))
+    const ok = o => o !== cmd && (!LEGAL || legalIn(o, 'commander')) && ciList(o).every(k => ci.includes(k)) && !isBasic(o) && (best2 || own.get(o.i))
       && !/\b(Conspiracy|Scheme|Plane|Phenomenon|Dungeon)\b/.test(o.type);
     const nonland = [], lands = [];
-    for(const o of S.oracle){ if(!ok(o)) continue; (isLand(o) ? lands : nonland).push({o, s: sc(o)}); }
+    for(const o of best2 ? S.oracle : [...own.keys()].map(i => S.oracle[i])){ if(!ok(o)) continue; (isLand(o) ? lands : nonland).push({o, s: sc(o)}); }
     nonland.sort((a, b) => b.s - a.s); lands.sort((a, b) => b.s - a.s);
     const chosen = new Set(), lines = [{o:cmd, n:1, cmd:true}];
     const NL = 63, mins = {ramp:10, draw:9, removal:8, wipe:2};
@@ -218,10 +222,10 @@ const ASSIST = (() => {
   /* ---------- Bewertung eigener Decks ---------- */
   function rateDeck(d){
     const sig = JSON.stringify([d.cards, d.cmd, d.fmt, S.meta && S.meta.date, S.cv]);
-    const m = MEMO.get(d.id); if(m && m.sig === sig) return m.r;
+    const m = d.id && MEMO.get(d.id); if(m && m.sig === sig) return m.r;
     const per = new Map(); let n = 0;
     for(const [id, k] of Object.entries(d.cards)){ const c = S.byId.get(id); if(!c) continue; per.set(c.o, (per.get(c.o) || 0) + k); n += k; }
-    if(!n){ MEMO.set(d.id, {sig, r:null}); return null; }
+    if(!n){ if(d.id) MEMO.set(d.id, {sig, r:null}); return null; }
     let q = 0, qn = 0;
     for(const [o, k] of per) if(!isLand(o)){ q += cardScore(o, d.fmt) * k; qn += k; }
     const quality = Math.min(1, (qn ? q / qn : 0) * (d.fmt === 'limited' ? 1.7 : 1));
@@ -254,7 +258,7 @@ const ASSIST = (() => {
     const score = Math.max(0, Math.min(100, Math.round(100 * (0.62 * quality + 0.38 * metaScore)) - Math.min(20, warn * 6) - manaPen));
     const tier = score >= 78 ? 'S' : score >= 64 ? 'A' : score >= 50 ? 'B' : score >= 36 ? 'C' : 'D';
     const r = {score, tier, quality, arche: arche ? {name: arche.name, share: arche.share} : null, note, metaDate: S.meta && S.meta.date};
-    MEMO.set(d.id, {sig, r});
+    if(d.id) MEMO.set(d.id, {sig, r});
     return r;
   }
 
@@ -304,44 +308,165 @@ const ASSIST = (() => {
     const own = poolOwn(), pop = new Map(((S.meta && S.meta.commanders) || []).map((c, i) => [c.name, i]));
     return [...own.keys()].map(i => S.oracle[i]).filter(canCommand).sort((a, b) => (pop.has(a.name) ? pop.get(a.name) : 999) - (pop.has(b.name) ? pop.get(b.name) : 999) || (a.edh || 1e6) - (b.edh || 1e6));
   }
-  function render(){
-    if(S.ui.assist === 'deck' && st.results) return renderDeckView();
-    const own = poolOwn(), isCmd = st.fmt === 'commander', b = poolBundle();
-    const empty = !own.size;
-    const cmd = st.cmd && S.byId.get(st.cmd);
-    let body = '';
-    if(empty){
-      body = `<div class="empty" style="padding:18px 6px"><div class="icon">🃏</div><b>${b ? 'Im Bundle sind noch keine Karten' : 'Du hast noch keine Karten'}</b>
-        <p>${b ? 'Scanne zuerst die Karten aus deinen Packs.' : 'Scanne zuerst ein paar Karten oder füge ein Fertigdeck hinzu – dann baue ich daraus Decks.'}${!b && st.mode === 'owned' ? ' Oder stell oben auf „Meine Karten + Kaufvorschläge“.' : ''}</p></div>`;
-    }
-    if(!empty || st.mode === 'best'){
-      if(isCmd){
-        const mine = ownCommanders().slice(0, 14);
-        body += `<label class="lbl">Commander</label>
-          ${cmd ? `<div class="item">${cardImg(cmd, dl(), 'small', 'style="width:44px;height:61px;border-radius:5px;object-fit:cover"')}<div class="grow"><b>${esc(cName(cmd))}</b><div class="tiny muted">${colDots(ciList(cmd.o))} ${esc(cType(cmd))}${own.get(cmd.o.i) ? ' · ✓ im Besitz' : ' · nicht im Besitz'}</div></div><button class="chip" data-act="as-cmd">Ändern</button></div>`
-            : `<button class="btn ghost block" data-act="as-cmd">👑 Commander wählen</button>`}
-          ${mine.length ? `<label class="lbl">Legendäre Kreaturen ${b ? 'aus dem Bundle' : 'aus deiner Sammlung'}</label><div class="chips" style="flex-wrap:wrap">${mine.map(o => `<button class="chip ${cmd && cmd.o === o ? 'on' : ''}" data-act="as-cmd-pick" data-o="${o.i}">${colDots(ciList(o))} ${esc(oName(o))}</button>`).join('')}</div>` : ''}
-          <button class="btn block" style="margin-top:14px" data-act="as-run" ${cmd ? '' : 'disabled'}>✨ Deck bauen</button>`;
-      } else {
-        body += `<label class="lbl">Farben (leer = alle Kombinationen durchprobieren)</label><div class="chips">${colorButtons(st.cols, 'as-col', false)}</div>
-          <label class="lbl">Spielstil</label>${chips('style', Object.entries(STYLES), st.style)}
-          <button class="btn block" style="margin-top:14px" data-act="as-run">✨ ${st.cols.length ? 'Deck bauen' : (b ? 'Stärkste Decks aus dem Bundle finden' : 'Meine stärksten Decks finden')}</button>`;
+  /* ---------- Empfehlungen: automatisch aus den eigenen Karten ---------- */
+  const FILTERS = [['best','⭐ Beste insgesamt'],['tier','🏅 Nach Stufe'],['ready','✓ Sofort spielbar'],['aggro','⚡ Aggro'],['midrange','⚖️ Midrange'],['control','🛡️ Kontrolle']];
+  const STYLE_TAG = {aggro:'⚡ Aggro', midrange:'⚖️ Midrange', control:'🛡️ Kontrolle'};
+  const COMBOS = (() => { const c = []; for(let i = 0; i < 5; i++){ c.push([COLOR_KEYS[i]]); for(let j = i + 1; j < 5; j++) c.push([COLOR_KEYS[i], COLOR_KEYS[j]]); } return c; })();
+  function asDeck(r){
+    const d = {cards:{}, side:{}, fmt: r.fmt || st.fmt, cmd:null, pool: st.pool || undefined, casual: !LEGAL};
+    for(const x of r.lines){ const c = poolPrint(x.o); if(!c) continue; d.cards[c.id] = (d.cards[c.id] || 0) + x.n; if(x.cmd) d.cmd = c.id; }
+    return d;
+  }
+  function comboLabel(cols){ return cols.length ? cols.map(k => COLORS[k].de).join('/') : 'Farblos'; }
+  function features(r){
+    const a = analyze(asDeck(r)), f = [];
+    f.push('Ø Manawert ' + a.avg.toFixed(1).replace('.', ','));
+    if(a.cre) f.push(a.cre + ' Kreaturen');
+    if(a.removal >= 4) f.push(a.removal + '× Entfernung');
+    if(a.draw >= 4) f.push(a.draw + '× Kartenziehen');
+    if(a.ramp >= 6) f.push(a.ramp + '× Mana-Beschleunigung');
+    const kw = Object.entries(a.kw).sort((x, y) => y[1] - x[1])[0]; if(kw && kw[1] >= 6) f.push(kw[1] + '× ' + kw[0]);
+    return f.slice(0, 4);
+  }
+  function collKey(){
+    const b = poolBundle();
+    return [st.pool || '', st.fmt, LEGAL ? 1 : 0, b ? bundleStats(b).total : 0, Object.values(S.coll).reduce((s, e) => s + e.q, 0), Object.keys(S.coll).length, S.cv, S.meta && S.meta.date].join(':');
+  }
+  /* Baut für eine Kartensammlung (Map Oracle → Anzahl) die besten Decks im Format – auch für Koop */
+  async function buildAll(fmt, opt={}){
+    const out = [];
+    if(fmt === 'commander' || fmt === 'brawl'){
+      const own = poolOwn();
+      const cmds = [...own.keys()].map(i => S.oracle[i]).filter(o => canCommand(o) && (!LEGAL || legalIn(o, 'commander')));
+      const pop = new Map(((S.meta && S.meta.commanders) || []).map((c, i) => [c.name, i]));
+      cmds.sort((a, b) => (pop.has(a.name) ? pop.get(a.name) : 999) - (pop.has(b.name) ? pop.get(b.name) : 999) || (a.edh || 1e6) - (b.edh || 1e6));
+      for(const o of cmds.slice(0, opt.maxCmd || 8)){
+        const p = poolPrint(o) || bestPrint(o); if(!p) continue;
+        const r = await buildCommander(p, 'owned', {noFetch: true});
+        r.style = analyze(asDeck(r)).style; out.push(r);
+        await sleep(0);
+      }
+    } else {
+      for(const style of ['aggro', 'midrange', 'control']){
+        for(const cols of COMBOS){
+          const r = buildConstructed(cols, style, fmt, 'owned');
+          if(r.spells < (r.size - (fmt === 'limited' ? 17 : 24)) * 0.5) continue;
+          r.style = style; out.push(r);
+        }
+        await sleep(0);
       }
     }
-    view.innerHTML = `<div class="row">${backBtn()}<h1 class="grow ell">${b ? 'Decks aus „' + esc(b.name) + '“' : 'Deck-Assistent'}</h1></div>
+    for(const r of out){
+      const N = r.size || 60, full = Math.min(1, r.total / N);
+      r.rank = (r.quality * 0.6 + (r.need ? r.ownedCopies / r.need : 0) * 0.4) * full * full;
+      r.rt = rateDeck(asDeck(r));
+    }
+    // gleiche Farben (bzw. gleicher Commander) + gleicher Stil nur einmal
+    const seen = new Map();
+    for(const r of out){ const k = (r.cmd ? r.cmd.o.name : r.cols.join('')) + ':' + r.style; if(!seen.has(k) || seen.get(k).rank < r.rank) seen.set(k, r); }
+    return [...seen.values()];
+  }
+  async function computeRecs(){
+    if(S.ui.assist !== 'wizard') return;
+    const key = collKey();
+    if(st.recsBusy === key) return;
+    st.recsBusy = key;
+    LEGAL = st.pool ? false : st.tourney;
+    try{ st.recs = await buildAll(st.fmt); st.recsKey = key; }
+    catch(e){ console.warn(e); st.recs = []; st.recsKey = key; }
+    finally{ LEGAL = true; st.recsBusy = null; }
+    const el = $('#as-best'); if(el && S.ui.assist === 'wizard') el.innerHTML = recHtml();
+  }
+  function recList(){
+    if(!st.recs) return null;
+    const f = st.filter;
+    let list = [...st.recs];
+    if(STYLE_TAG[f]) list = list.filter(r => r.style === f);
+    if(f === 'ready') list = list.filter(r => !r.short && r.ownedCopies >= r.need);
+    if(f === 'best') list.sort((a, b) => b.rank - a.rank);
+    else list.sort((a, b) => (!b.short) - (!a.short) || (b.rt ? b.rt.score : 0) - (a.rt ? a.rt.score : 0));
+    const keys = new Set(), res = [];
+    for(const r of list){ const k = r.cmd ? r.cmd.o.name : r.cols.join(''); if(keys.has(k)) continue; keys.add(k); res.push(r); if(res.length >= 6) break; }
+    return res;
+  }
+  function shortNote(r){
+    const N = r.size || 60, miss = r.need - r.ownedCopies, src = st.pool ? 'aus dem Bundle' : 'hast du';
+    if(r.short) return `<div class="miss" style="margin-top:6px">⚠️ Nur ${r.total}/${N} Karten möglich – ${r.short} fehlen, ${st.pool ? 'das Bundle hat zu wenige Karten in diesen Farben' : 'du hast in diesen Farben noch nicht genug Karten'}.</div>`;
+    return `<div class="tiny muted" style="margin-top:6px">${r.ownedCopies}/${r.need} Karten ${src}${r.basicN ? ` + ${r.basicN} Standardländer` : ''}${miss ? ` · <span class="miss">${miss} fehlen</span>` : ' · <span style="color:var(--good)">komplett spielbar ✓</span>'}</div>`;
+  }
+  function resultCard(r, i){
+    return `<button class="deck-item" data-act="as-best" data-i="${i}" style="align-items:flex-start">
+      ${tierBadge(r.rt)}
+      <div class="grow"><div class="tiny muted" style="margin-bottom:2px">${STYLE_TAG[r.style] || ''}</div>
+        <div class="row" style="gap:6px">${colDots(r.cols)}<b class="ell">${esc(r.cmd ? cName(r.cmd) : comboLabel(r.cols))}</b></div>
+        ${r.rt && r.rt.arche ? `<div class="tiny" style="color:var(--gold2);margin-top:2px">≈ Meta-Deck „${esc(r.rt.arche.name)}“</div>` : ''}
+        <div class="row wrap" style="gap:4px;margin-top:6px">${features(r).map(f => `<span class="tag">${esc(f)}</span>`).join('')}</div>
+        ${shortNote(r)}</div><span class="muted">›</span></button>`;
+  }
+  function recHtml(){
+    const list = recList(); if(!list) return '';
+    st.best = list;
+    if(!poolOwn().size) return `<div class="empty">${st.pool ? 'Im Bundle sind noch keine Karten – scanne zuerst die Packs.' : 'Du hast noch keine Karten – scanne ein paar oder füge ein Fertigdeck hinzu.'}</div>`;
+    if(!list.length) return `<div class="empty">${st.filter === 'ready' ? 'Noch kein Deck komplett spielbar – schau unter „Beste insgesamt“, was fehlt.' : st.fmt === 'commander' ? 'Du hast noch keine passende legendäre Kreatur als Commander.' : 'Für diesen Filter kommt mit deinen Karten kein Deck zustande.'}</div>`;
+    return list.map((r, i) => resultCard(r, i)).join('');
+  }
+  function tourneySwitch(){
+    return `<label class="switch-row"><input type="checkbox" data-act="as-tourney" ${st.tourney ? 'checked' : ''}><span class="switch"></span><span class="small"><b>Turnierspielbar</b> <span class="tiny muted">${st.tourney ? '– nur Karten, die in ' + esc(FORMAT_DE[st.fmt] || st.fmt) + ' erlaubt sind' : '– aus: alle deine Karten, einfach zum Spaß spielen'}</span></span></label>`;
+  }
+  function wishBody(own, b){
+    const isCmd = st.fmt === 'commander', cmd = st.cmd && S.byId.get(st.cmd);
+    if(isCmd){
+      const mine = ownCommanders().slice(0, 14);
+      return `<label class="lbl">Commander</label>
+        ${cmd ? `<div class="item">${cardImg(cmd, dl(), 'small', 'style="width:44px;height:61px;border-radius:5px;object-fit:cover"')}<div class="grow"><b>${esc(cName(cmd))}</b><div class="tiny muted">${colDots(ciList(cmd.o))} ${esc(cType(cmd))}${own.get(cmd.o.i) ? ' · ✓ im Besitz' : ' · nicht im Besitz'}</div></div><button class="chip" data-act="as-cmd">Ändern</button></div>`
+          : `<button class="btn ghost block" data-act="as-cmd">👑 Commander wählen</button>`}
+        ${mine.length ? `<label class="lbl">Legendäre Kreaturen ${b ? 'aus dem Bundle' : 'aus deiner Sammlung'}</label><div class="chips" style="flex-wrap:wrap">${mine.map(o => `<button class="chip ${cmd && cmd.o === o ? 'on' : ''}" data-act="as-cmd-pick" data-o="${o.i}">${colDots(ciList(o))} ${esc(oName(o))}</button>`).join('')}</div>` : ''}`;
+    }
+    return `<label class="lbl">Farben (leer = alle Kombinationen durchprobieren)</label><div class="chips">${colorButtons(st.cols, 'as-col', false)}</div>
+      <label class="lbl">Spielstil</label>${chips('style', Object.entries(STYLES), st.style)}`;
+  }
+  function render(){
+    if(S.ui.assist === 'deck' && st.results) return renderDeckView();
+    if(S.ui.assist === 'meta') return renderMeta();
+    const own = poolOwn(), b = poolBundle();
+    st.filter = st.filter || 'best';
+    const ready = st.recs && st.recsKey === collKey();
+    view.innerHTML = `<div class="row">${backBtn()}<h1 class="grow ell">✨ ${b ? 'Decks aus „' + esc(b.name) + '“' : 'Deckbuilder'}</h1></div>
       ${b ? `<p class="muted small" style="margin-top:-4px">Es werden <b>nur Karten aus diesem Bundle</b> benutzt (${bundleStats(b).total} Karten) – Standardländer kommen automatisch dazu.</p>` : ''}
-      <div class="card"><label class="lbl" style="margin-top:0">Format</label>${chips('fmt', (b ? POOL_FMTS : FMTS).map(f => [f, FORMAT_DE[f]]), st.fmt)}
+      <label class="lbl" style="margin-top:0">Format</label>${chips('fmt', (b ? POOL_FMTS : FMTS).map(f => [f, FORMAT_DE[f]]), st.fmt)}
+      <h2 style="margin-top:14px">💡 Empfehlungen ${b ? 'aus dem Bundle' : 'aus deinen Karten'}</h2>
+      ${b || st.fmt === 'casual' ? '' : tourneySwitch()}
+      <p class="tiny muted" style="margin:-2px 0 8px">Nur mit Karten, die du ${b ? 'im Bundle ' : ''}hast – Foxering probiert alle Farben${st.fmt === 'commander' ? ' bzw. deine Commander' : ''} und Spielstile durch.</p>
+      <div class="chips" style="margin-bottom:10px;flex-wrap:wrap">${FILTERS.map(([k, l]) => `<button class="chip ${st.filter === k ? 'on' : ''}" data-act="as-filter" data-f="${k}">${l}</button>`).join('')}</div>
+      <div id="as-best">${ready ? recHtml() : '<div class="boot" style="min-height:90px"><div class="loader" style="width:28px;height:28px"></div><span class="small muted">Foxering probiert alle Farben und Spielstile durch …</span></div>'}</div>
+
+      <h2>🛠️ Selbst bauen</h2>
+      <button class="deck-item" data-act="as-manual"><span style="font-size:24px">✍️</span><div class="grow"><b style="display:block">Deck komplett selbst zusammenstellen</b><span class="tiny muted">Leeres Deck anlegen und Karte für Karte hinzufügen</span></div><span class="muted">›</span></button>
+      <div class="card"><b>Oder: Foxering baut nach deinen Wünschen</b>
+        ${wishBody(own, b)}
         ${b ? '' : `<label class="lbl">Karten</label>${chips('mode', [['owned','Nur meine Karten'],['best','Meine Karten + Kaufvorschläge']], st.mode)}
         <p class="tiny muted" style="margin:6px 0 0">${st.mode === 'owned' ? 'Das Deck besteht ausschließlich aus Karten, die du besitzt.' : 'Das Deck wird aus deinen Karten gebaut – nur freie Plätze werden mit Karten aufgefüllt, die du kaufen könntest (🛒).'}</p>`}
-        ${body}</div>
-      <div id="as-meta"></div>`;
-    renderMetaBox(own);
+        <button class="btn block" style="margin-top:14px" data-act="as-run" ${st.fmt === 'commander' && !st.cmd ? 'disabled' : ''}>Deck bauen</button></div>
+      ${b ? '' : `<button class="btn ghost block" style="margin-top:12px" data-act="meta-open">🏆 Was spielen Turnierspieler gerade? (Meta-Decks)</button>`}
+      <p class="tiny muted">So bewertet Foxering: Kartenstärke (EDHREC-Beliebtheit, Häufigkeit in Turnierdecks) plus Nähe zur aktuellen Meta. Die Stufe (S–D) ist eine Einschätzung, keine Garantie.</p>`;
+    if(!ready) setTimeout(computeRecs, 60);
   }
-  function renderMetaBox(own){
+  /* Meta-Übersicht (eigene Seite unter Mehr) */
+  function renderMeta(){
+    if(!META_FMTS.includes(st.metaFmtSel)) st.metaFmtSel = 'standard';
+    const save = st.fmt; st.fmt = st.metaFmtSel;
+    view.innerHTML = `<div class="row">${backBtn()}<h1 class="grow">🏆 Meta-Decks</h1></div>
+      <p class="tiny muted" style="margin-top:-4px">Die Decks, die Turnierspieler gerade am meisten spielen (MTGGoldfish) bzw. die beliebtesten Commander (EDHREC). Rechts: wie viele Karten du dafür schon hast. Tippe ein Deck an, um es zu sehen.</p>
+      <div class="chips" style="flex-wrap:wrap">${META_FMTS.map(f => `<button class="chip ${st.metaFmtSel === f ? 'on' : ''}" data-act="meta-fmt" data-f="${f}">${esc(FORMAT_DE[f])}</button>`).join('')}</div>
+      <div id="as-meta"></div>`;
+    renderMetaBox(ownedByOracle(), false);
+    st.fmt = save;
+  }
+  function renderMetaBox(own, strictArg){
     const box = $('#as-meta'); if(!box) return;
     if(st.fmt === 'limited'){ box.innerHTML = ''; return; }
     const date = S.meta && S.meta.date ? ' · Stand ' + fmtDate(S.meta.date) : '';
-    const strict = st.mode === 'owned' || !!st.pool;
+    const strict = strictArg === undefined ? (st.mode === 'owned' || !!st.pool) : strictArg;
     const where = st.pool ? 'im Bundle' : 'in deiner Sammlung';
     if(st.fmt === 'commander'){
       let list = ((S.meta && S.meta.commanders) || []).slice(0, 40).map((c, i) => {
@@ -397,9 +522,23 @@ const ASSIST = (() => {
   }
 
   /* ---------- Aktionen ---------- */
-  function forPool(id){ st.pool = id; st.fmt = 'limited'; st.mode = 'owned'; st.results = null; st.cols = []; st.cmd = null; }
-  A['assist-open'] = () => { st.pool = null; st.results = null; if(st.fmt === 'limited') st.fmt = 'commander'; go({tab:'decks', deck:null, bundle:null, assist:'wizard'}); };
-  A['as-set'] = el => { st[el.dataset.k] = el.dataset.v; render(); };
+  function forPool(id){ st.pool = id; st.fmt = 'limited'; st.mode = 'owned'; st.results = null; st.cols = []; st.cmd = null; st.recs = null; st.filter = 'best'; }
+  A['assist-open'] = () => { st.pool = null; st.results = null; st.recs = null; if(st.fmt === 'limited') st.fmt = 'commander'; go({tab:'decks', deck:null, bundle:null, assist:'wizard'}); };
+  A['as-set'] = el => { st[el.dataset.k] = el.dataset.v; if(el.dataset.k === 'fmt') st.recs = null; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A['as-filter'] = el => { st.filter = el.dataset.f; $$('[data-act="as-filter"]').forEach(b => b.classList.toggle('on', b === el)); const b = $('#as-best'); if(b && st.recs) b.innerHTML = recHtml(); };
+  A['as-tourney'] = () => { st.tourney = !st.tourney; st.recs = null; const y = window.scrollY; render(); window.scrollTo(0, y); };
+  A['meta-open'] = () => { if(st.pool){ st.pool = null; st.recs = null; } if(META_FMTS.includes(st.fmt)) st.metaFmtSel = st.fmt; go({tab:'more', deck:null, bundle:null, assist:'meta'}); };
+  A['meta-fmt'] = el => { st.metaFmtSel = el.dataset.f; renderMeta(); };
+  A['as-manual'] = async () => {
+    const name = await promptText('Neues Deck', '', st.pool ? 'z. B. Sealed Grün/Weiß' : 'z. B. Rot/Grün Aggro'); if(!name) return;
+    const d = newDeck(name, st.fmt); if(st.pool) d.pool = st.pool; if(!st.pool && !st.tourney) d.casual = true;
+    persist(); go({tab: st.pool ? 'bundles' : 'decks', assist:null, deck: d.id});
+  };
+  A['as-best'] = el => {
+    const r = st.best && st.best[+el.dataset.i]; if(!r) return;
+    st.results = [r]; st.sel = 0; st.title = r.cmd ? 'Dein Deck: ' + cName(r.cmd) : comboLabel(r.cols) + ' · ' + (STYLE_TAG[r.style] || '').replace(/^\S+ /, ''); st.mode = 'owned';
+    go({assist:'deck'});
+  };
   A['as-col'] = el => { const k = el.dataset.col; st.cols = st.cols.includes(k) ? st.cols.filter(x => x !== k) : [...st.cols, k].slice(-3); render(); };
   A['as-cmd'] = () => {
     const own = ownedByOracle();
@@ -412,6 +551,7 @@ const ASSIST = (() => {
     if(!poolOwn().size && (st.mode === 'owned' || st.pool)){ toast(st.pool ? 'Im Bundle sind noch keine Karten' : 'Du hast noch keine Karten'); return; }
     busy(st.fmt === 'commander' ? 'Suche die besten Karten für deinen Commander …' : st.pool ? 'Baue Decks aus dem Bundle …' : 'Baue Decks aus deinen Karten …');
     await sleep(40);
+    LEGAL = st.pool ? false : st.tourney;
     try{
       if(st.fmt === 'commander'){
         const cmd = S.byId.get(st.cmd); if(!cmd){ render(); return; }
@@ -432,6 +572,7 @@ const ASSIST = (() => {
       st.sel = 0;
       if(S.ui.assist === 'deck'){ render(); window.scrollTo(0, 0); } else go({tab: st.pool ? 'bundles' : 'decks', deck:null, assist:'deck'});
     }catch(e){ console.warn(e); toast('Fehler: ' + e.message, 4000); S.ui.assist = 'wizard'; render(); }
+    finally{ LEGAL = true; }
   };
   A['as-pick'] = el => { st.sel = +el.dataset.i; render(); };
   A['as-meta'] = el => {
@@ -444,7 +585,13 @@ const ASSIST = (() => {
     const d = newDeck(name, r.fmt || st.fmt); d.src = 'assist'; if(st.pool) d.pool = st.pool;
     for(const x of r.lines){ const c = poolPrint(x.o); if(!c) continue; d.cards[c.id] = (d.cards[c.id] || 0) + x.n; if(x.cmd) d.cmd = c.id; }
     for(const x of r.side || []){ const c = bestPrint(x.o); if(c) d.side[c.id] = (d.side[c.id] || 0) + x.n; }
-    persist(); toast('Deck gespeichert ✓'); go({tab: d.pool ? 'bundles' : 'decks', deck:d.id, assist:null});
+    if(!st.pool && !st.tourney && r.mode !== 'meta') d.casual = true;
+    persist();
+    if(st.pool){
+      const also = await ask('Deck gespeichert ✓', 'Soll das Deck auch zu deinen normalen Decks (mit Karten aus deiner Sammlung)?', [{l:'Nur im Bundle', v:false, c:'ghost'}, {l:'Auch in meine Decks', v:true}]);
+      if(also){ copyToNormal(d); toast('Auch unter Decks gespeichert ✓'); }
+    } else toast('Deck gespeichert ✓');
+    go({tab: d.pool ? 'bundles' : 'decks', deck:d.id, assist:null});
   };
   A['as-copy-miss'] = () => {
     const r = st.results[st.sel]; if(!r) return;
@@ -489,6 +636,19 @@ const ASSIST = (() => {
     d.cards[c.id] = (d.cards[c.id] || 0) + 1; persist(); el.textContent = '✓'; el.disabled = true; toast(oName(o) + ' hinzugefügt'); refreshBehindSheet();
   };
 
-  return {render, rateDeck, guide, analyze, forPool, state: st, reset(){ MF = {}; NAMES = null; MEMO = new Map(); st.meta = null; }};
+  /* Koop: die stärksten vollständigen Decks einer Sammlung (own = Map Oracle → Anzahl, null = eigene) */
+  async function recsForColl(own, fmt, tourney){
+    const saveO = OWN_OVERRIDE, saveP = st.pool;
+    OWN_OVERRIDE = own || ownedByOracle(); st.pool = null; LEGAL = !!tourney;
+    let list = [];
+    try{ list = await buildAll(fmt, {maxCmd: 10}); }
+    finally{ OWN_OVERRIDE = saveO; st.pool = saveP; LEGAL = true; }
+    list = list.filter(r => !r.short);
+    for(const r of list) r.feat = features(r);
+    const best = new Map(); for(const r of list){ const k = r.cmd ? r.cmd.o.name : r.cols.join(''); if(!best.has(k) || (best.get(k).rt.score < r.rt.score)) best.set(k, r); }
+    return [...best.values()].sort((a, b) => b.rt.score - a.rt.score);
+  }
+  function deckFromResult(r, own){ const save = OWN_OVERRIDE; OWN_OVERRIDE = own || null; try{ return asDeck(r).cards; } finally{ OWN_OVERRIDE = save; } }
+  return {render, rateDeck, guide, analyze, forPool, recsForColl, deckFromResult, comboLabel, styleTag: STYLE_TAG, state: st, reset(){ MF = {}; NAMES = null; MEMO = new Map(); st.meta = null; st.recs = null; }};
 })();
 window.ASSIST = ASSIST;

@@ -29,7 +29,7 @@ const RAR_DE = {c:'Common', u:'Uncommon', r:'Rare', m:'Mythic', s:'Special', b:'
 const RAR_COL = {c:'#B8BCC8', u:'#9FC3D6', r:'#E3B65C', m:'#F26B3A', s:'#B07CF6', b:'#B07CF6'};
 // Reihenfolge = Bits in den Kartendaten (siehe tools/build-data.mjs)
 const LEGAL_FORMATS = ['standard','pioneer','modern','legacy','vintage','commander','pauper','brawl'];
-const FORMAT_DE = {standard:'Standard', pioneer:'Pioneer', modern:'Modern', legacy:'Legacy', vintage:'Vintage', commander:'Commander', pauper:'Pauper', brawl:'Brawl', limited:'Limited (40 Karten)'};
+const FORMAT_DE = {standard:'Standard', pioneer:'Pioneer', modern:'Modern', legacy:'Legacy', vintage:'Vintage', commander:'Commander', pauper:'Pauper', brawl:'Brawl', limited:'Limited (40 Karten)', casual:'Casual (60 Karten)'};
 const META_FORMATS = ['standard','pioneer','modern','pauper','legacy'];
 const TYPES = [['Creature','Kreatur'],['Planeswalker','Planeswalker'],['Instant','Spontanzauber'],['Sorcery','Hexerei'],['Artifact','Artefakt'],['Enchantment','Verzauberung'],['Battle','Schlacht'],['Land','Land']];
 const TYPE_DE = Object.fromEntries(TYPES);
@@ -41,11 +41,12 @@ const S = {
   coll: {},      // "set:nr|lang|foil" -> {q, t}
   decks: [],
   bundles: [],   // Bundle-Events: {id, name, prod, created, cards:{key:{q,t}}, merged}
+  partners: [],  // Koop: {id, name, created, updated, coll, fmt, tourney}
   products: null, setDe: {},
   settings: {
     currency:'EUR', dispLang:'de', scanLang:'auto', defaultLang:'de', confirm:2, sound:true, vibrate:true, rotation:'auto', foil:false, frame:'m'
   },
-  ui: { bundle:null, assist:null, tab:'collection', mode:'owned', q:'', cols:[], set:'', rarity:'', type:'', fmt:'', lang:'', foil:'', sort:'value', limit:240, deck:null, allSets:false, setQ:'' }
+  ui: { partner:null, duel:false, pick:false, bundle:null, assist:null, tab:'collection', mode:'owned', q:'', cols:[], set:'', rarity:'', type:'', fmt:'', lang:'', foil:'', sort:'value', limit:240, deck:null, allSets:false, setQ:'' }
 };
 
 /* ---------- Hilfsfunktionen ---------- */
@@ -99,14 +100,14 @@ let QIDX = null;
 function persist(){ QIDX = null; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 250); if(window.scheduleAutoBackup) window.scheduleAutoBackup(); }
 async function saveNow(){
   clearTimeout(saveTimer); QIDX = null;
-  const data = {coll:S.coll, decks:S.decks, bundles:S.bundles, settings:S.settings};
+  const data = {coll:S.coll, decks:S.decks, bundles:S.bundles, partners:S.partners, settings:S.settings};
   try{ localStorage.setItem('mf-user', JSON.stringify(data)); }catch(e){}
   try{ await DB.set('user', data); }catch(e){}
 }
 async function loadUser(){
   let u = await DB.get('user');
   if(!u){ try{ u = JSON.parse(localStorage.getItem('mf-user') || 'null'); }catch(e){ u = null; } }
-  if(u){ S.coll = u.coll || {}; S.decks = u.decks || []; S.bundles = u.bundles || []; Object.assign(S.settings, u.settings || {}); }
+  if(u){ S.coll = u.coll || {}; S.decks = u.decks || []; S.bundles = u.bundles || []; S.partners = u.partners || []; Object.assign(S.settings, u.settings || {}); }
 }
 
 /* ---------- Kartenkatalog ---------- */

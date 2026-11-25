@@ -83,6 +83,7 @@ function renderBundle(){
       <div class="stats"><div><b>${st.total}</b>Karten</div><div><b>${(rar.r || 0) + (rar.m || 0)}</b>Rare/Mythic</div><div><b>${decks.length}</b>Decks</div></div>
       ${st.top ? `<div class="tiny" style="color:#d8d4f2;margin-top:8px">Bester Zug: <b>${esc(cName(st.top.c, st.top.lang))}</b>${st.top.foil ? ' (Foil)' : ''} · ${money(st.topV)}</div>` : ''}</div>
     <div class="row" style="gap:8px;margin:12px 0"><button class="btn grow" data-act="bundle-scan">📷 Karten scannen</button><button class="btn ghost" data-act="bundle-manual">+ Manuell</button></div>
+    <button class="btn ghost block" style="margin:-4px 0 12px" data-act="bundle-import">📥 Datei importieren (Moxfield, Manabox, CSV, Textliste)</button>
     <button class="deck-item assist-cta" data-act="bundle-assist" ${st.total ? '' : 'disabled style="opacity:.5"'}><span style="font-size:26px">✨</span><div class="grow"><b style="display:block">Decks aus diesem Bundle bauen</b><span class="tiny muted">Nur mit den Karten aus dem Bundle – z. B. Limited (40 Karten) für den Spieleabend</span></div><span class="muted">›</span></button>
     ${b.merged ? `<div class="card small" style="margin-bottom:12px;color:var(--good)">✓ Am ${fmtDate(new Date(b.merged).toISOString()).split(',')[0]} in die Sammlung übernommen. Neue Scans in dieses Bundle landen automatisch auch in der Sammlung.</div>`
       : st.total ? `<div class="card row" style="margin-bottom:12px"><div class="grow small">Die Karten sind <b>nur im Bundle</b> und noch nicht in deiner Sammlung.</div><button class="btn small" data-act="bundle-merge">➕ In Sammlung</button></div>` : ''}
@@ -115,6 +116,28 @@ A['bundle-manual'] = () => {
     bundleAdd(b, c.id, lang, false, 1); toast(`${oName(o)} → ${b.name}`); renderBundle();
   });
 };
+A['bundle-import'] = async () => {
+  const b = currentBundle(); if(!b) return; closeSheet();
+  const t = await pickFile('.csv,.txt,text/csv,text/plain'); if(!t) return;
+  const {out, bad} = parseCardFile(t);
+  if(!out.length){ await ask('Nichts erkannt', 'In der Datei habe ich keine Karten gefunden. Exportiere die Liste z. B. in Moxfield, Manabox oder Archidekt als <b>CSV</b> oder Text und wähle die Datei hier aus.', [{l:'OK', v:true}]); return; }
+  const total = out.reduce((s, x) => s + x.n, 0);
+  const has = bundleStats(b).total;
+  const mode = await ask('In dieses Bundle importieren?', `${total} Karten erkannt${bad.length ? `, <span style="color:var(--bad)">${bad.length} Zeile(n) nicht zugeordnet</span>` : ''}.${has ? ` Im Bundle sind schon ${has} Karten.` : ''}${b.merged ? ' Weil das Bundle schon übernommen ist, landen die Karten auch in der Sammlung.' : ' Deine Sammlung bleibt unverändert.'}`,
+    has ? [{l:'Hinzufügen', v:'add'}, {l:'Bundle-Inhalt ersetzen', v:'replace', c:'ghost'}, {l:'Abbrechen', v:null, c:'ghost'}] : [{l:'Importieren', v:'add'}, {l:'Abbrechen', v:null, c:'ghost'}]);
+  if(!mode) return;
+  if(mode === 'replace') for(const e of bundleEntries(b)) bundleAdd(b, e.c.id, e.lang, e.foil, -e.q);
+  // ohne genaue Angabe von Set/Nummer: den Druck aus dem Set des Bundles nehmen
+  const main = b.prod && b.prod.set;
+  for(const x of out){
+    let c = x.c;
+    if(!x.exact && main && c.s !== main){ const inSet = (S.byOracle.get(c.o.i) || []).filter(p => p.s === main); if(inSet.length) c = ENGINE.preferPrinting(inSet); }
+    bundleAdd(b, c.id, x.lang, x.foil, x.n);
+  }
+  await saveNow(); renderBundle();
+  if(bad.length) await ask(`${total} Karten importiert`, `Diese Zeilen konnte ich keiner Karte zuordnen:<br><br><span class="tiny">${bad.slice(0, 40).map(esc).join('<br>')}${bad.length > 40 ? '<br>…' : ''}</span>`, [{l:'OK', v:true}]);
+  else toast(`${total} Karten ins Bundle importiert ✓`, 3000);
+};
 A['bundle-merge'] = async () => {
   const b = currentBundle(); if(!b) return;
   const st = bundleStats(b);
@@ -130,6 +153,7 @@ A['bundle-assist'] = () => {
 };
 A['bundle-menu'] = () => openSheet(`<h2>Bundle</h2><div class="list">
   <button class="item" style="width:100%" data-act="bundle-rename">✎ Umbenennen</button>
+  <button class="item" style="width:100%" data-act="bundle-import">📥 Datei importieren (Moxfield, Manabox …)</button>
   <button class="item" style="width:100%" data-act="bundle-csv">📤 Kartenliste als CSV</button>
   <button class="item" style="width:100%;color:var(--bad)" data-act="bundle-delete">🗑️ Bundle-Event löschen</button></div>`);
 A['bundle-rename'] = async () => { const b = currentBundle(); closeSheet(); const n = await promptText('Umbenennen', b.name); if(n){ b.name = n; persist(); renderBundle(); } };
