@@ -165,7 +165,9 @@ function renderGrid(){
   }
   sortItems(items, u.mode === 'all' && u.sort === 'value' && u.set ? 'number' : u.sort);
   const shown = items.slice(0, u.limit);
-  $('#grid-info').textContent = items.length ? `${items.length} ${items.length === 1 ? 'Karte' : 'Karten'}` + (u.mode === 'all' ? ` · ${items.filter(i => i.q).length} im Besitz` : '') : '';
+  const nCopies = items.reduce((s2, i) => s2 + (i.q || 0), 0), nNames = new Set(items.map(i => i.c.o.i)).size;
+  $('#grid-info').textContent = !items.length ? '' : u.mode === 'all' ? `${items.length} ${items.length === 1 ? 'Karte' : 'Karten'} · ${items.filter(i => i.q).length} im Besitz`
+    : `${nCopies} Karten · ${nNames} verschiedene · ${items.length} Drucke`;
   if(!items.length){
     grid.innerHTML = '';
     $('#grid-more').innerHTML = hint ? `<div class="empty">${esc(hint)}</div>` : u.mode === 'owned' && !Object.keys(S.coll).length
@@ -1195,7 +1197,7 @@ async function scanTick(){
   SC.emptyRun = 0; SC.fail = 0; SC.webMiss = 0;
   if(S.settings.rotation === 'auto' && SC.goodRot !== SC.rot){ SC.goodRot = SC.rot; scanOptsUI(); }
 
-  const need = !NATIVE && r.score >= 0.85 ? 1 : Math.max(1, +S.settings.confirm || 2);  // Browser ist langsamer: bei sicherer Erkennung reicht 1 Bild
+  const need = !NATIVE && (r.strong || r.score >= 0.95) ? 1 : Math.max(1, +S.settings.confirm || 2);  // Browser ist langsamer: nur bei sehr sicherer Erkennung reicht 1 Bild
   // Gleiche Karte zählt als Bestätigung, auch wenn die Sammlernummer nur in manchen Bildern lesbar war.
   // Behalten wird das genaueste Ergebnis (mit gelesenem Set/Nummer bzw. Sprache).
   const detail = x => (x.strong ? 4 : 0) + (x.col && x.col.num ? 2 : 0) + (x.col && x.col.lang ? 1 : 0);
@@ -1204,12 +1206,21 @@ async function scanTick(){
   if(r.strong || SC.lastN >= need){
     const best = SC.last;
     if(SC.lastAdded && SC.lastAdded.c.o === best.c.o && !SC.sawEmpty){ SC.state = 'lock'; SC.lockSig = sig; scanStatus('✓ ' + cName(best.c) + ' – nächste Karte', 'ok'); return; }
+    // Bild hat sich kaum verändert, aber eine andere Karte wurde erkannt: Das ist dieselbe Karte, die vorher falsch gelesen wurde.
+    const prev = SC.lastAdded;
+    if(prev && !SC.sawEmpty && prev.sig && sigDiff(sig, prev.sig) < 28 && Date.now() - prev.t < 15000 && SC.session[0] === prev){
+      const was = cName(prev.c, prev.lang);
+      changeItem(prev, {c: best.c, lang: best.lang, ambiguous: best.ambiguous}); prev.sig = sig;
+      SC.state = 'lock'; SC.lockSig = sig; SC.last = null; SC.lastN = 0;
+      scanStatus('✓ korrigiert: ' + cName(best.c, best.lang) + ' (statt ' + was + ')', 'ok');
+      return;
+    }
     confirmScan(best, sig);
   } else scanStatus('Erkenne: ' + cName(r.c, r.lang), 'read');
 }
 function confirmScan(r, sig){
   const foil = !!S.settings.foil;
-  const item = {sid: 'x' + Date.now() + Math.random(), c: r.c, lang: r.lang, foil, ambiguous: r.ambiguous, t: Date.now(), target: SC.target};
+  const item = {sid: 'x' + Date.now() + Math.random(), c: r.c, lang: r.lang, foil, ambiguous: r.ambiguous, t: Date.now(), target: SC.target, sig};
   putCard(item, 1);
   SC.session.unshift(item); SC.lastAdded = item; SC.sawEmpty = false;
   SC.state = 'lock'; SC.lockSig = sig; SC.last = null; SC.lastN = 0;
